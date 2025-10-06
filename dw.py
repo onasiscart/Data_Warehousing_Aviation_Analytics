@@ -28,12 +28,19 @@ class DW:
                         aircraftreg VARCHAR(6),
                         takeoffs INT NOT NULL,
                         flight_hours REAL NOT NULL,
+                        ADOSS REAL NOT NULL DEFAULT 0,
+                        ADOSU REAL NOT NULL DEFAULT 0,
+                        DY INT NOT NULL DEFAULT 0,
+                        CN INT NOT NULL DEFAULT 0,
+                        DY_duration REAL NOT NULL DEFAULT 0,
+                        Pilot_reports INT NOT NULL DEFAULT 0,
+                        Maintenance_reports INT NOT NULL DEFAULT 0,
                         CONSTRAINT pk_daily_flight_info PRIMARY KEY (flight_date, aircraftreg),
                         CONSTRAINT fk_aircraft FOREIGN KEY (aircraftreg) REFERENCES aircraft(aircraftreg)
                     );
                 """
                 )
-                print("daily_flight_info created successfully")
+                print("daily_flight_stats created successfully")
                 self.conn_duckdb.execute(
                     """
                     CREATE TABLE aircraft (
@@ -45,25 +52,32 @@ class DW:
                 """
                 )
                 print("aircraft created successfully")
-                self.conn_duckdb.execute(
-                    """
-                    CREATE TABLE monthly_aircraft_stats(
-                        aircraftreg VARCHAR(6),
-                        month INT NOT NULL,
-                        ADOSS REAL NOT NULL DEFAULT 0,
-                        ADOSU REAL NOT NULL DEFAULT 0,
-                        DY INT NOT NULL DEFAULT 0,
-                        CN INT NOT NULL DEFAULT 0,
-                        DY_duration REAL NOT NULL DEFAULT 0,
-                        Pilot_reports INT NOT NULL DEFAULT 0,
-                        Maintenance_reports INT NOT NULL DEFAULT 0,
-                        CONSTRAINT pk_monthly_aircraft_stats PRIMARY KEY (aircraftreg, month),
-                        CONSTRAINT fk_aircraft FOREIGN KEY (aircraftreg) REFERENCES aircraft(aircraftreg)    
+                self.conn_duckdb.execute('''
+                    CREATE TABLE date(
+                        date DATE PRIMARY KEY,
+                        month_id INT NOT NULL, --YYYYMM
+                        year_id INT NOT NULL,  --YYYY
                     );
-                """
-                )
-                print("monthly_aircraft_stats created successfully")
-
+                    );
+                ''')
+                print("date created successfully")
+                self.conn_duckdb.execute('''
+                    CREATE TABLE airports(
+                        airport_code VARCHAR(3) PRIMARY KEY,
+                    );
+                ''')
+                print("airports created successfully")
+                self.conn_duckdb.execute('''
+                    CREATE TABLE total_maintenance_reports(
+                        Airport VARCHAR(3),
+                        AicraftReg VARCHAR(6),
+                        report_count INT,
+                        PRIMARY KEY (Airport, AicraftReg),
+                        FOREIGN KEY (Airport) REFERENCES airports(airport_code),
+                        FOREIGN KEY (AicraftReg) REFERENCES aircraft(aircraftreg)
+                    );
+                ''')
+                print("total_maintenance_reports created successfully")
                 self.conn_duckdb.commit()
 
             except duckdb.Error as e:
