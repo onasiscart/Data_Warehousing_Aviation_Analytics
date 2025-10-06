@@ -36,7 +36,8 @@ class DW:
                         Pilot_reports INT NOT NULL DEFAULT 0,
                         Maintenance_reports INT NOT NULL DEFAULT 0,
                         CONSTRAINT pk_daily_flight_info PRIMARY KEY (flight_date, aircraftreg),
-                        CONSTRAINT fk_aircraft FOREIGN KEY (aircraftreg) REFERENCES aircraft(aircraftreg)
+                        CONSTRAINT fk_aircraft FOREIGN KEY (aircraftreg) REFERENCES aircraft(aircraftreg),
+                        CONSTRAINT fk_date FOREIGN KEY (flight_date) REFERENCES date(date)
                     );
                 """
                 )
