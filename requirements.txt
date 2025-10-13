@@ -1,0 +1,5 @@
+# csv files must be in current folder
+psycopg2
+pandas
+pathlib
+pygrametl
