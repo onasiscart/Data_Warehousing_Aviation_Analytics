@@ -114,7 +114,7 @@ def extract_aircraftlookup(extracted_data: dict[str, pd.DataFrame | CSVSource]) 
     """"""
     path = "aircraft-manufacturerinfo-lookup.csv"
     try:
-        extracted_data["aircraft_lookup"] = CSVSource(
+        extracted_data["lookup_aircrafts"] = CSVSource(
             open(path, "r", encoding="utf-8"), delimiter=","
         )
     except FileNotFoundError:

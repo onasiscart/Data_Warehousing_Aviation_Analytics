@@ -53,22 +53,27 @@ class DW:
                 """
                 )
                 print("aircraft created successfully")
-                self.conn_duckdb.execute('''
+                self.conn_duckdb.execute(
+                    """
                     CREATE TABLE date(
                         date DATE PRIMARY KEY,
                         month_id INT NOT NULL, --YYYYMM
                         year_id INT NOT NULL,  --YYYY
                     );
                     );
-                ''')
+                """
+                )
                 print("date created successfully")
-                self.conn_duckdb.execute('''
+                self.conn_duckdb.execute(
+                    """
                     CREATE TABLE airports(
                         airport_code VARCHAR(3) PRIMARY KEY,
                     );
-                ''')
+                """
+                )
                 print("airports created successfully")
-                self.conn_duckdb.execute('''
+                self.conn_duckdb.execute(
+                    """
                     CREATE TABLE total_maintenance_reports(
                         Airport VARCHAR(3),
                         AicraftReg VARCHAR(6),
@@ -77,7 +82,8 @@ class DW:
                         FOREIGN KEY (Airport) REFERENCES airports(airport_code),
                         FOREIGN KEY (AicraftReg) REFERENCES aircraft(aircraftreg)
                     );
-                ''')
+                """
+                )
                 print("total_maintenance_reports created successfully")
                 self.conn_duckdb.commit()
 
