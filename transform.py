@@ -23,7 +23,7 @@ def build_monthCode(date) -> str:
 
 from typing import Dict
 
-def transformk(data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+def transform(data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     """
     Apply all transformations to the dataframes in the input dictionary.
 
