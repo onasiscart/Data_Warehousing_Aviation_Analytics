@@ -355,7 +355,7 @@ def query_reporting_per_role_baseline():
                 GROUP BY manufacturer, year, role
                 )
         SELECT f1.manufacturer, f1.year, f1.role,
-            1000*ROUND(f1.counter/f2.flightHours, 3) AS RRh,
+            100*ROUND(f1.counter/f2.flightHours, 3) AS RRh,
             100*ROUND(f1.counter/f2.flightCycles, 2) AS RRc              
         FROM atomic_data_reporting f1
             JOIN atomic_data_utilization f2 ON f2.manufacturer = f1.manufacturer AND f1.year = f2.year

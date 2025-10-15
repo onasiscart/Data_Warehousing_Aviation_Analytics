@@ -97,29 +97,65 @@ class DW:
         # ======================================================================================================= Dimension and fact table objects
         # TODO: Declare the dimensions and facts for pygrametl
 
-    # TODO: Rewrite the queries exemplified in "extract.py"
     def query_utilization(self):
         result = self.conn_duckdb.execute(
+            """SELECT 
+                ac.manufacturer,
+                d.year AS year,
+                ROUND(SUM(f.flight_hours)/COUNT(DISTINCT f.aircraftregistration), 2) AS FH,
+                ROUND(SUM(f.takeoffs)/COUNT(DISTINCT f.aircraftregistration), 2) AS TakeOff,
+                ROUND(SUM(f.ADOSS)/COUNT(DISTINCT f.aircraftregistration), 2) AS ADOSS,
+                ROUND(SUM(f.ADOSU)/COUNT(DISTINCT f.aircraftregistration), 2) AS ADOSU,
+                ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2) AS ADOS,
+                365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2) AS ADIS,
+                ROUND(
+                    ROUND(SUM(f.flight_hours)/COUNT(DISTINCT f.aircraftregistration), 2) /
+                    ((365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2)) * 24), 2
+                ) AS DU,
+                ROUND(
+                    ROUND(SUM(f.takeoffs)/COUNT(DISTINCT f.aircraftregistration), 2) /
+                    (365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2)), 2
+                ) AS DC,
+                100 * ROUND(SUM(f.delays)/ROUND(SUM(f.takeoffs), 2), 4) AS DYR,
+                100 * ROUND(SUM(f.cancellations)/ROUND(SUM(f.takeoffs), 2), 4) AS CNR,
+                100 - ROUND(100*(SUM(f.delays)+SUM(f.cancellations))/SUM(f.takeoffs), 2) AS TDR,
+                100 * ROUND(SUM(f.delayduration)/SUM(f.delays),2) AS ADD
+            FROM DailyFlightStats f, Aircraft ac, Date d
+            WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
+            GROUP BY ac.manufacturer, d.year
+            ORDER BY ac.manufacturer, d.year;
             """
-            SELECT ...
-            """
-        ).fetchall()
+        ).fetchall()  # type: ignore
         return result
 
     def query_reporting(self):
         result = self.conn_duckdb.execute(
             """
-            SELECT ...
+            SELECT ac.manufacturer, d.year, 
+                100*ROUND(SUM(f.pilotreports+f.maintenancereports)/SUM(f.flighthours), 3) as RRh,
+                100*ROUND(SUM(f.pilotreports+f.maintenancereports)/SUM(f.takeoffs), 2) as RRc
+            FROM DailyFlightStats f, Aircrafts ac, Date d
+            WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
+            GROUP BY ac.manufacturer, d.year
+            ORDER BY ac.manufacturer, d.year;
             """
-        ).fetchall()
+        ).fetchall()  # type: ignore
         return result
 
     def query_reporting_per_role(self):
         result = self.conn_duckdb.execute(
             """
-            SELECT ...
+            SELECT ac.manufacturer, d.year,
+                100*ROUND( SUM(f.pilotreports)/SUM(f.flighthours), 3) as PRRh,
+                100*ROUND( SUM(f.pilotreports)/SUM(f.takeoffs), 2) as PRRc,
+                100*ROUND( SUM(f.maintenancereports)/SUM(f.flighthours), 3) as MRRh,
+                100*ROUND( SUM(f.maintenancereports)/SUM(f.takeoffs), 2) as MRRc
+            FROM DailyFlightStats f, Aircrafts ac, Date d
+            WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
+            GROUP BY ac.manufacturer, d.year
+            ORDER BY ac.manufacturer, d.year;
             """
-        ).fetchall()
+        ).fetchall()  # type: ignore
         return result
 
     def close(self):
