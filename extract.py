@@ -1,11 +1,13 @@
+import logging
 from pathlib import Path
 import psycopg2
 import pandas as pd
 
 # https://pygrametl.org
-# from pygrametl.datasources import CSVSource, SQLSource
+from pygrametl.datasources import CSVSource
 
 
+# ====================================================================================================================================
 # Connect to the PostgreSQL source
 path = Path("db_conf.txt")
 if not path.is_file():
@@ -35,94 +37,145 @@ except Exception as e:
         f"Database configuration file '{path.absolute()}' not properly formatted (check file 'db_conf.example.txt'."
     )
 
+# ====================================================================================================================================
 
-# TODO: Implement here all the extracting functions
+
+def extract_flights(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
+    """
+    Extract flight data from the database and store it in the provided dictionary.
+    Prec: connection to DBBDA established in conn
+    """
+    try:
+        relevant_flight_cols = [
+            "aircraftregistration",
+            "cancelled",
+            "actualdeparture",
+            "actualarrival",
+            "scheduleddeparture",
+            "scheduledarrival",
+        ]
+        extracted_data["flights"] = pd.read_sql(
+            f'SELECT {", ".join(relevant_flight_cols)} FROM "AIMS"."flights"', conn
+        )
+    except Exception as e:
+        raise RuntimeError(f"Error reading flight data: {e}") from e
+
+
+def extract_maint(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
+    """""" ""
+    try:
+        relevant_maint_cols = [
+            "aircraftregistration",
+            "scheduledarrival",
+            "scheduleddeparture",
+            "programmed",
+        ]
+        extracted_data["maintenance"] = pd.read_sql(
+            f'SELECT {", ".join(relevant_maint_cols)} FROM "AIMS"."maintenance"', conn
+        )
+    except Exception as e:
+        raise RuntimeError(f"Error reading maintenance data: {e}") from e
+
+
+def extract_techlog(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
+    """"""
+    try:
+        relevant_amos_cols = [
+            "aircraftregistration",
+            "executiondate",
+            "reporteurclass",
+            "reporteurid",
+        ]
+        extracted_data["techlog"] = pd.read_sql(
+            f'SELECT {", ".join(relevant_amos_cols)} FROM "AMOS"."technicallogbookorders"',
+            conn,
+        )
+    except Exception as e:
+        raise RuntimeError(f"Error reading technical logbook data: {e}") from e
+
+
+def extract_reporterslookup(
+    extracted_data: dict[str, pd.DataFrame | CSVSource],
+) -> None:
+    """"""
+    path = "maintenance_personnel.csv"
+    try:
+        extracted_data["lookup_reporters"] = pd.read_csv(path)
+
+    except FileNotFoundError:
+        raise FileNotFoundError(f"[extract_reporterslookup] File {path} not found.")
+    except Exception as e:
+        raise RuntimeError(
+            f"[extract_reporterslookup] Error reading {path}: {e}"
+        ) from e
+
+
+def extract_aircraftlookup(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
+    """"""
+    path = "aircraft-manufacturerinfo-lookup.csv"
+    try:
+        extracted_data["aircraft_lookup"] = CSVSource(
+            open(path, "r", encoding="utf-8"), delimiter=","
+        )
+    except FileNotFoundError:
+        raise FileNotFoundError(f"[extract_aircraftlookup] File {path} not found.")
+    except Exception as e:
+        raise RuntimeError(f"[extract_aircraftlookup] Error reading {path}: {e}") from e
 
 
 # function to extract all necessary files
-def extract_all(conn: psycopg2.extensions.connection) -> dict[str, pd.DataFrame]:
+def extract() -> dict[str, pd.DataFrame | CSVSource]:
     """
     Prec: connection to DBBDA established
-    Post: returns a dictionary with extracted tables (AIMS_flights, AIMS_maint, AMOS, Maintenance, Aircrafts)
-           as pandas dataframes
+    Returns: dictionary with extracted tables (flights, maintenance, techlog, lookup_reporters) as dataframes
+    and an aircraft lookup pygrametl iterable
     """
-    extracted_data: dict[str, pd.DataFrame] = {}
 
-    # Extract data from SQL source files
-    extract_SQL_data(extracted_data, conn)
+    extracted_data: dict[str, pd.DataFrame | CSVSource] = {}
 
-    # paths to csv files
-    csv_maintenance_path = "maintenance_personnel.csv"
-    csv_aircrafts_path = "aircraft-manufacturerinfo-lookup.csv"
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-    # Extract data from external CSV files
-    extracted_data["Airport_lookup"] = pd.read_csv(csv_maintenance_path)
-    extracted_data["Aircraft_lookup"] = pd.read_csv(csv_aircrafts_path)
+    # actions that extract data from sources and save them in the extracted_data dictionary
+    extract_funcs = [
+        extract_flights,
+        extract_maint,
+        extract_techlog,
+        extract_reporterslookup,
+        extract_aircraftlookup,
+    ]
 
+    for func in extract_funcs:
+        logging.info(f"Executing {func.__name__}...")
+        try:
+            func(extracted_data)
+            logging.info(f"{func.__name__} completed successfully.")
+        except Exception as e:
+            logging.critical(f"{func.__name__} failed: {e}")
+            # stop pipeline in case of an error
+            raise
+
+    logging.info("Extraction completed successfully.")
     return extracted_data
-
-
-def extract_SQL_data(
-    extracted_data: dict[str, pd.DataFrame], conn: psycopg2.extensions.connection
-) -> None:
-    """
-    Pre: extracted_data is a dictionary to store the extracted tables as pandas dataframes
-          connection to DBBDA established
-    Post: extracted_data is updated with the extracted tables (AIMS_flights, AIMS_maint, AMOS)
-           as pandas dataframes"""
-
-    # AIMS queries
-    relevant_flight_cols = [
-        "aircraftregistration",
-        "cancelled",
-        "actualdeparture",
-        "actualarrival",
-        "scheduleddeparture",
-        "scheduledarrival",
-    ]
-    relevant_maint_cols = [
-        "aircraftregistration",
-        "scheduledarrival",
-        "scheduleddeparture",
-        "programmed",
-    ]
-    # AMOS queries
-    relevant_amos_cols = [
-        "aircraftregistration",
-        "executiondate",
-        "reporteurclass",
-        "reporteurid",
-    ]
-
-    extracted_data["AIMS_flights"] = pd.read_sql(
-        f'SELECT {", ".join(relevant_flight_cols)} FROM "AIMS"."flights"', conn
-    )
-    extracted_data["AIMS_maint"] = pd.read_sql(
-        f'SELECT {", ".join(relevant_maint_cols)} FROM "AIMS"."maintenance"', conn
-    )
-    extracted_data["AMOS"] = pd.read_sql(
-        f'SELECT {", ".join(relevant_amos_cols)} FROM "AMOS"."technicallogbookorders"',
-        conn,
-    )
-
-    # debugging
-    for key, df in extracted_data.items():
-        print(f"Extracted {len(df)} rows from {key} table.")
-    return
 
 
 # ====================================================================================================================================
 # Baseline queries
 def get_aircrafts_per_manufacturer() -> dict[str, list[str]]:
-    """Prec:
-    Post: returns a dictionary with one entry per manufacturer and a list of aircraft identifiers as values
     """
+    Prec:
+    Returns: returns a dictionary with one entry per manufacturer and a list of aircraft identifiers as values
+    """
+    path = "aircraft-manufacturerinfo-lookup.csv"
     aircrafts = {
         "Airbus": [],
         "Boeing": [],
     }
-
-    return aircrafts
+    source = CSVSource(open(path, encoding="utf-8"), delimiter=",", encoding="utf-8")
+    for row in source:
+        manufacturer = row["manufacturer"]
+        registration = row["aircraftregistration"]
+        aircrafts[manufacturer].append(registration)
+    return dict(aircrafts)
 
 
 def query_utilization_baseline():
@@ -319,9 +372,11 @@ def query_reporting_per_role_baseline():
 def main():
     extracted_data = extract_all(conn)
     # Example of accessing the extracted dataframes
-    for table_name, df in extracted_data.items():
-        print(f"Table: {table_name}, Number of rows: {len(df)}")
-        print(df.head())  # Print the first few rows of each dataframe
+    for key, df in extracted_data.items():
+        if isinstance(df, pd.DataFrame):
+            print(df.dtypes)
+        elif isinstance(df, CSVSource):
+            print(f"Extracted data from {key} CSV source.")
 
 
 if __name__ == "__main__":
