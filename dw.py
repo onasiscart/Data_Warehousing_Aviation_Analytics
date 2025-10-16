@@ -2,8 +2,7 @@ import os
 import sys
 import duckdb  # https://duckdb.org
 import pygrametl  # https://pygrametl.org
-from pygrametl.tables import CachedDimension, SnowflakedDimension, FactTable
-
+from pygrametl.tables import CachedDimension, FactTable
 
 duckdb_filename = "dw.duckdb"
 
@@ -23,64 +22,63 @@ class DW:
             try:
                 self.conn_duckdb.execute(
                     """
-                    CREATE TABLE daily_flight_info (
-                        flight_date DATE,
-                        aircraftreg VARCHAR(6),
-                        takeoffs INT NOT NULL,
-                        flight_hours REAL NOT NULL,
-                        ADOSS REAL NOT NULL DEFAULT 0,
-                        ADOSU REAL NOT NULL DEFAULT 0,
-                        DY INT NOT NULL DEFAULT 0,
-                        CN INT NOT NULL DEFAULT 0,
-                        DY_duration REAL NOT NULL DEFAULT 0,
-                        Pilot_reports INT NOT NULL DEFAULT 0,
-                        Maintenance_reports INT NOT NULL DEFAULT 0,
-                        CONSTRAINT pk_daily_flight_info PRIMARY KEY (flight_date, aircraftreg),
-                        CONSTRAINT fk_aircraft FOREIGN KEY (aircraftreg) REFERENCES aircraft(aircraftreg),
-                        CONSTRAINT fk_date FOREIGN KEY (flight_date) REFERENCES date(date)
-                    );
-                """
-                )
-                print("daily_flight_stats created successfully")
-                self.conn_duckdb.execute(
-                    """
-                    CREATE TABLE aircraft (
-                        aircraftreg VARCHAR(6),
+                    CREATE TABLE Aircrafts (
+                        aircraftregistration VARCHAR(6),
                         model VARCHAR(100) NOT NULL,
                         manufacturer VARCHAR(100) NOT NULL,
-                        CONSTRAINT pk_aircraft PRIMARY KEY (aircraftreg)
+                        CONSTRAINT pk_aircraft PRIMARY KEY (aircraftregistration)
                     );
                 """
                 )
                 print("aircraft created successfully")
                 self.conn_duckdb.execute(
                     """
-                    CREATE TABLE date(
+                    CREATE TABLE Date(
                         date DATE PRIMARY KEY,
-                        month_id INT NOT NULL, --YYYYMM
-                        year_id INT NOT NULL,  --YYYY
-                    );
+                        month INT NOT NULL, --YYYYMM
+                        year INT NOT NULL  --YYYY
                     );
                 """
                 )
                 print("date created successfully")
                 self.conn_duckdb.execute(
                     """
-                    CREATE TABLE airports(
-                        airport_code VARCHAR(3) PRIMARY KEY,
+                    CREATE TABLE Airports(
+                        airportcode VARCHAR(3) PRIMARY KEY,
                     );
                 """
                 )
                 print("airports created successfully")
                 self.conn_duckdb.execute(
                     """
-                    CREATE TABLE total_maintenance_reports(
-                        Airport VARCHAR(3),
-                        AicraftReg VARCHAR(6),
-                        report_count INT,
-                        PRIMARY KEY (Airport, AicraftReg),
-                        FOREIGN KEY (Airport) REFERENCES airports(airport_code),
-                        FOREIGN KEY (AicraftReg) REFERENCES aircraft(aircraftreg)
+                    CREATE TABLE DailyAircraftStats (
+                        date DATE,
+                        aircraftregistration VARCHAR(6),
+                        takeoffs INT NOT NULL,
+                        flighthours REAL NOT NULL,
+                        ADOSS REAL NOT NULL DEFAULT 0,
+                        ADOSU REAL NOT NULL DEFAULT 0,
+                        delays INT NOT NULL DEFAULT 0,
+                        cancellations INT NOT NULL DEFAULT 0,
+                        delayduration REAL NOT NULL DEFAULT 0,
+                        pilotreports INT NOT NULL DEFAULT 0,
+                        maintenancereports INT NOT NULL DEFAULT 0,
+                        CONSTRAINT pk_daily_flight_info PRIMARY KEY (date, aircraftregistration),
+                        CONSTRAINT fk_aircraft FOREIGN KEY (aircraftregistration) REFERENCES Aircrafts(aircraftregistration),
+                        CONSTRAINT fk_date FOREIGN KEY (date) REFERENCES Date(date)
+                    );
+                """
+                )
+                print("daily_flight_stats created successfully")
+                self.conn_duckdb.execute(
+                    """
+                    CREATE TABLE TotalMaintenanceReports(
+                        airportcode VARCHAR(3),
+                        aircraftregistration VARCHAR(6),
+                        reports INT,
+                        PRIMARY KEY (airportcode, aircraftregistration),
+                        FOREIGN KEY (airportcode) REFERENCES Airports(airportcode),
+                        FOREIGN KEY (aircraftregistration) REFERENCES Aircrafts(aircraftregistration)
                     );
                 """
                 )
@@ -95,7 +93,47 @@ class DW:
         self.conn_pygrametl = pygrametl.ConnectionWrapper(self.conn_duckdb)
 
         # ======================================================================================================= Dimension and fact table objects
-        # TODO: Declare the dimensions and facts for pygrametl
+        # ================= Dimensions
+        self.aircraft_dim = CachedDimension(
+            name="Aircrafts",
+            key="aircraftregistration",
+            attributes=["model", "manufacturer"],
+        )
+
+        self.date_dim = CachedDimension(
+            name="Date",
+            key="date",
+            attributes=["month", "year"],
+        )
+
+        self.airport_dim = CachedDimension(
+            name="Airports",
+            key="airportcode",
+            attributes=[
+                "airportcode"
+            ],  # we add it as an attribute so pygrametl is happy
+        )
+
+        # ================= Fact tables
+        self.daily_aircraft_fact = FactTable(
+            name="DailyAircraftStats",  # nom de la taula
+            keyrefs=("date", "aircraftregistration"),  # clau composta (FK a dimensions)
+            measures=(
+                "flight_hours",
+                "takeoffs",
+                "ADOSS",
+                "ADOSU",
+                "delays",
+                "cancellations",
+                "delayed_minutes",
+            ),
+        )
+
+        self.total_maintenance_fact = FactTable(
+            name="TotalMaintenanceReports",
+            keyrefs=("airportcode", "aircraftregistration"),
+            measures=("reports",),
+        )
 
     def query_utilization(self):
         result = self.conn_duckdb.execute(
@@ -120,7 +158,7 @@ class DW:
                 100 * ROUND(SUM(f.cancellations)/ROUND(SUM(f.takeoffs), 2), 4) AS CNR,
                 100 - ROUND(100*(SUM(f.delays)+SUM(f.cancellations))/SUM(f.takeoffs), 2) AS TDR,
                 100 * ROUND(SUM(f.delayduration)/SUM(f.delays),2) AS ADD
-            FROM DailyFlightStats f, Aircraft ac, Date d
+            FROM DailyAircraftStats f, Aircraft ac, Date d
             WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
             GROUP BY ac.manufacturer, d.year
             ORDER BY ac.manufacturer, d.year;
@@ -134,7 +172,7 @@ class DW:
             SELECT ac.manufacturer, d.year, 
                 100*ROUND(SUM(f.pilotreports+f.maintenancereports)/SUM(f.flighthours), 3) as RRh,
                 100*ROUND(SUM(f.pilotreports+f.maintenancereports)/SUM(f.takeoffs), 2) as RRc
-            FROM DailyFlightStats f, Aircrafts ac, Date d
+            FROM DailyAircraftStats f, Aircrafts ac, Date d
             WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
             GROUP BY ac.manufacturer, d.year
             ORDER BY ac.manufacturer, d.year;

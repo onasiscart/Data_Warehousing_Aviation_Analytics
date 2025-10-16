@@ -3,15 +3,9 @@ import extract
 import transform
 import load
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
+    # create a data warehouse object
     dw = DW(create=True)
-
-    # TODO: Write the control flow
-    load.XXX(dw,
-        transform.XXX(
-            extract.XXX()
-        )
-    )
-
+    # fill it with data extracted and transformed from sources provided
+    load.load(dw, transform.transform(extract.extract()))
     dw.close()

@@ -1,128 +1,56 @@
-from tqdm import tqdm
 import pandas as pd
-import duckdb
-from pygrametl.tables import CachedDimension, FactTable
+from tqdm import tqdm
 from pygrametl.datasources import CSVSource
-from typing import Dict, Union
-
-# Configuració general
-BATCH_SIZE = 1000
-DUCKDB_FILENAME = "dw.duckdb"
+from pygrametl.tables import CachedDimension
+from dw import DW
 
 
-def establish_connection(create=False) -> pygrametl.ConnectionWrapper:
+def load(dw: DW, data: dict[str, pd.DataFrame | CSVSource]):
     """
-    Retorna una connexió pygrametl a DuckDB.
-    - Si create=True, crea un nou fitxer dw.duckdb (sobreescrivint si existeix)
+    Carrega les dades transformades dins del DW.
+    dw: objecte DW del dw.py
+    data: dict de DataFrames o CSVSource
     """
-
-    try:
-        conn_duckdb = duckdb.connect(DUCKDB_FILENAME)
-        print(f"Connected to DuckDB database '{DUCKDB_FILENAME}' successfully.")
-    except duckdb.Error as e:
-        raise RuntimeError(
-            f"Unable to connect to DuckDB database '{DUCKDB_FILENAME}': {e}"
-        ) from e
-
-    return pygrametl.ConnectionWrapper(conn_duckdb)
-
-
-def load(data: Dict[str, Union[pd.DataFrame, CSVSource]]) -> None:
-    """
-    Carrega les dades transformades al data warehouse.
-    Prec: Les taules ja han d'existir al DuckDB.
-    """
-    conn = establish_connection(create=False)
-
-    # ================= Dimensions
-    aircraft_dim = CachedDimension(
-        name="Aircrafts",
-        key="aircraftregistration",
-        attributes=["model", "manufacturer"],
-        targetconnection=conn,
-    )
-
-    date_dim = CachedDimension(
-        name="Dates",
-        key="date",
-        attributes=["month", "year"],
-        targetconnection=conn,
-    )
-
-    airport_dim = CachedDimension(
-        name="Airports",
-        key="airportcode",
-        attributes=[],
-        targetconnection=conn,
-    )
-
-    # ================= Fact tables
-    daily_flight_fact = FactTable(
-        name="DailyFlightStats",  # nom de la taula
-        keyrefs=("date", "aircraftregistration"),  # clau composta (FK a dimensions)
-        measures=(
-            "flight_hours",
-            "takeoffs",
-            "ADOSS",
-            "ADOSU",
-            "delays",
-            "cancellations",
-            "delayed_minutes",
-        ),
-        targetconnection=conn,
-    )
-
-    total_maintenance_fact = FactTable(
-        name="TotalMaintenanceReports",
-        keyrefs=("airportcode", "aircraftregistration"),
-        measures=("reports",),
-        targetconnection=conn,
-    )
-
-    # ================= Mapatge dataset -> objecte ETL
-    table_mapping = {
-        "Aircraft": aircraft_dim,
-        "Date": date_dim,
-        "Airport": airport_dim,
-        "DailyFlightStats": daily_flight_fact,
-        "TotalMaintenanceReports": total_maintenance_fact,
-    }
-
     for name, dataset in data.items():
-        if name not in table_mapping:
-            print(f"[WARN] No table defined for dataset '{name}', skipping...")
+        # Comprovar que hi ha taula associada al DW
+        if not any(hasattr(dw, f"{name}_{suffix}") for suffix in ("dim", "fact")):
+            print(f"[WARN] Dataset '{name}' no té taula associada al DW.")
             continue
 
-        table = table_mapping[name]
-        batch = []
+        # Trobar automàticament la taula (dim o fact)
+        table = getattr(dw, f"{name}_dim", None) or getattr(dw, f"{name}_fact")
 
+        # Convertir dataset a iterable de dicts
         if isinstance(dataset, pd.DataFrame):
-            iterator = dataset.iterrows()
+            iterator = DataFrameSource(dataset)
             total = len(dataset)
         elif isinstance(dataset, CSVSource):
             iterator = iter(dataset)
             total = None
         else:
-            raise TypeError(f"Dataset '{name}' is not a DataFrame or CSVSource.")
+            raise TypeError(f"Dataset '{name}' no és DataFrame ni CSVSource.")
 
-        for item in tqdm(iterator, total=total, desc=f"Loading {name}"):
-            row = item[1].to_dict() if isinstance(dataset, pd.DataFrame) else item
+        # Inserció en batch
+        batch = []
+        for row in tqdm(iterator, total=total, desc=f"Loading {name}"):
+            try:
+                if isinstance(table, CachedDimension):
+                    table.ensure(row)
+                else:
+                    batch.append(row)
+                    if len(batch) >= 1000:
+                        table.insertmany(batch)
+                        dw.conn_pygrametl.commit()
+                        batch = []
+            except Exception as e:
+                print(f"[ERROR] Error carregant fila a '{name}': {e}")
+                continue
 
-            # Dimensions: usar ensure() per evitar duplicats
-            if isinstance(table, CachedDimension):
-                table.ensure(row)
-            # Fact tables: acumulem en batch
-            else:
-                batch.append(row)
-                if len(batch) >= BATCH_SIZE:
-                    table.insertmany(batch)
-                    conn.commit()
-                    batch = []
-
-        # Inserim la resta del batch per fact tables
-        if isinstance(table, FactTable) and batch:
+        # Inserir la resta del batch
+        if batch and not isinstance(table, CachedDimension):
             table.insertmany(batch)
-            conn.commit()
+            dw.conn_pygrametl.commit()
 
-    conn.close()
-    print("LOAD completed successfully.")
+    # Commit final
+    dw.conn_pygrametl.commit()
+    print("LOAD completed successfully")

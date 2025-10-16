@@ -84,7 +84,7 @@ def extract_techlog(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None
             "aircraftregistration",
             "executiondate",
             "reporteurclass",
-            "reporteurid",
+            "reporteurID",
         ]
         extracted_data["techlog"] = pd.read_sql(
             f'SELECT {", ".join(relevant_amos_cols)} FROM "AMOS"."technicallogbookorders"',
@@ -368,16 +368,6 @@ def query_reporting_per_role_baseline():
 
 
 # ====================================================================================================================================ç
-#  MAIN
-def main():
-    extracted_data = extract_all(conn)
-    # Example of accessing the extracted dataframes
-    for key, df in extracted_data.items():
-        if isinstance(df, pd.DataFrame):
-            print(df.dtypes)
-        elif isinstance(df, CSVSource):
-            print(f"Extracted data from {key} CSV source.")
-
 
 if __name__ == "__main__":
     main()
