@@ -90,7 +90,7 @@ def transform_flights(flights_df: pd.DataFrame) -> pd.DataFrame:
     agg_flights = flights_df.groupby(
         ["date", "aircraftregistration"], as_index=False
     ).agg(
-        flightFhours=("flighthours", "sum"),
+        flighthours=("flighthours", "sum"),
         takeoffs=("takeoffs", "sum"),
         DY=("DY", "sum"),
         CN=("CN", "sum"),
