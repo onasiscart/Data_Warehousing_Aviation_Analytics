@@ -55,7 +55,7 @@ class DW:
                         date DATE,
                         aircraftregistration VARCHAR(6),
                         takeoffs INT NOT NULL,
-                        flighthours REAL NOT NULL,
+                        flight_hours REAL NOT NULL,
                         ADOSS REAL NOT NULL DEFAULT 0,
                         ADOSU REAL NOT NULL DEFAULT 0,
                         delays INT NOT NULL DEFAULT 0,

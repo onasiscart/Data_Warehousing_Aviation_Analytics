@@ -40,7 +40,7 @@ def transform(data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     maint_df = data["maintenance"]
     techlog_df = data["techlog"]
     lookup_reporters_df = data["lookup_reporters"]
-    lookup_aircrafts_df = data["lookup_aircrafts"]
+    lookup_aircrafts = data["lookup_aircrafts"]
 
     agg_flights = transform_flights(flights_df)
 
@@ -54,14 +54,15 @@ def transform(data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     total_maint_reports = create_total_maint_reports(
         agg_flights, techlog_df, lookup_reporters_df
     )
-    aircrafts = lookup_aircrafts_df.copy()
+
     airports = lookup_reporters_df[["airport"]].drop_duplicates().reset_index(drop=True)
+    airports.rename(columns={"airport": "airportcode"}, inplace=True)
 
     return {
         "date": time,
         "daily_aircraft": daily_flight_stats,
         "total_maintenance": total_maint_reports,
-        "aircraft": aircrafts,
+        "aircraft": lookup_aircrafts,
         "airport": airports,
     }
 
@@ -90,11 +91,11 @@ def transform_flights(flights_df: pd.DataFrame) -> pd.DataFrame:
     agg_flights = flights_df.groupby(
         ["date", "aircraftregistration"], as_index=False
     ).agg(
-        flighthours=("flighthours", "sum"),
+        flight_hours=("flighthours", "sum"),
         takeoffs=("takeoffs", "sum"),
-        DY=("DY", "sum"),
-        CN=("CN", "sum"),
-        sumdelay=("sumdelay", "sum"),
+        delays=("DY", "sum"),
+        cancellations=("CN", "sum"),
+        delayed_minutes=("sumdelay", "sum"),
     )
 
     return agg_flights
@@ -166,13 +167,19 @@ def transform_maint(maint_df: pd.DataFrame) -> pd.DataFrame:
     Transform the maintenance dataframe.
     """
 
+
     # Step 1: calculate derived attributes
     calculate_maintenance_attributes(maint_df)
 
-    # Step 2: groupby
-    agg_maint = maint_df.groupby(["date", "aircraftregistration"], as_index=False).agg(
-        ADOSS=("TOSS", "sum"), ADOSU=("TOSU", "sum")
+
+    # Step 2: groupby and aggregate
+    agg_maint = maint_df.groupby(
+        ["date", "aircraftregistration"], as_index=False
+    ).agg(
+        ADOSS=("TOSS", "sum"),
+        ADOSU=("TOSU", "sum")
     )
+
     return agg_maint
 
 
@@ -189,7 +196,7 @@ def calculate_maintenance_attributes(maint_df: pd.DataFrame) -> None:
     calc_maintenance_time(maint_df)
 
     # Project to keep only relevant cols
-    maint_df.drop(columns=["scheduledarrival", "scheduleddeparture", "programmed"])
+    maint_df.drop(columns=["scheduledarrival", "scheduleddeparture", "programmed"], inplace=True)
 
 
 def calc_maintenance_time(maint_df: pd.DataFrame) -> None:
@@ -214,6 +221,12 @@ def transform_techlog(techlog_df: pd.DataFrame) -> None:
     to_timestamps(techlog_df, ["executiondate"])
     techlog_df["date"] = techlog_df["executiondate"].apply(build_dateCode)
     techlog_df.drop(columns=["executiondate"], inplace=True)
+
+
+    # Create pilotreports and maintenancereports flags
+    techlog_df["pilotreports"] = (techlog_df["reporteurclass"] == "PIREP").astype(int)
+    techlog_df["maintenancereports"] = (techlog_df["reporteurclass"] == "MAREP").astype(int)
+
 
 
 def create_total_maint_reports(
@@ -244,7 +257,7 @@ def create_total_maint_reports(
                 - 'airport'
                 - 'count'
                 - 'takeoffs'
-                - 'flighthours
+                - 'flight_hours
     """
 
     def join_airports_to_maint(
@@ -254,20 +267,20 @@ def create_total_maint_reports(
         Join airport information to the maintenance dataframe using the reporter lookup table.
 
         Args:
-            maint_df (pd.DataFrame): Maintenance dataframe containing 'reporteurID'.
-            lookup_df (pd.DataFrame): Reporter lookup dataframe containing 'reporteurID' and 'airport'.
+            maint_df (pd.DataFrame): Maintenance dataframe containing 'reporteurid'.
+            lookup_df (pd.DataFrame): Reporter lookup dataframe containing 'reporteurid' and 'airport'.
 
         Returns:
             pd.DataFrame: Maintenance dataframe with the 'airport' column added.
         """
         return maint_df.merge(
-            lookup_df[["reporteurID", "airport"]], on="reporteurID", how="left"
+            lookup_df[["reporteurid", "airport"]], on="reporteurid", how="left"
         )
 
     # Step 1: Aggregate flight data by aircraft
     grouped_flights = agg_flights_df.groupby(
         "aircraftregistration", as_index=False
-    ).agg(takeoffs=("takeoffs", "sum"), flighthours=("flighthours", "sum"))
+    ).agg(takeoffs=("takeoffs", "sum"), flight_hours=("flight_hours", "sum"))
 
     # Step 2: Filter only MAREP reporters
     maint_df = maint_df[maint_df["reporteurclass"] == "MAREP"].copy()
@@ -275,7 +288,7 @@ def create_total_maint_reports(
 
     # Step 3: GROUPBY before reporter, aircraft BEFORE THE JOIN
     counts = maint_df.groupby(
-        ["reporteurID", "aircraftregistration"], as_index=False
+        ["reporteurid", "aircraftregistration"], as_index=False
     ).size()
     counts.rename(columns={"size": "count"}, inplace=True)
 
@@ -291,6 +304,13 @@ def create_total_maint_reports(
     total_maint_reports = total_maint_reports.merge(
         grouped_flights, on="aircraftregistration", how="left"
     )
+
+    total_maint_reports.rename(columns={
+    "airport": "airportcode",
+    "count": "reports"
+    }, inplace=True)
+
+
 
     return total_maint_reports
 
