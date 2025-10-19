@@ -115,15 +115,26 @@ def extract_aircraftlookup(extracted_data: dict[str, pd.DataFrame | CSVSource]) 
     """"""
     path = "aircraft-manufacturerinfo-lookup.csv"
     try:
-        extracted_data["lookup_aircrafts"] = CSVSource(
-            open(path, "r", encoding="utf-8"), delimiter=","
-        )
+        # Llegir com DataFrame per normalitzar columnes
+        df = pd.read_csv(path)
+        
+        # Renombrar columnes per consistència amb el DW
+        df.rename(columns={
+            'aircraft_reg_code': 'aircraftregistration',
+            'aircraft_manufacturer': 'manufacturer',
+            'aircraft_model': 'model',
+            'manufacturer_serial_number': 'serialnumber'
+        }, inplace=True)
+        
+        # Retornar com DataFrame (més fiable que CSVSource)
+        extracted_data["lookup_aircrafts"] = df
+        
     except FileNotFoundError:
         raise FileNotFoundError(f"[extract_aircraftlookup] File {path} not found.")
     except Exception as e:
         raise RuntimeError(f"[extract_aircraftlookup] Error reading {path}: {e}") from e
-
-
+    
+    
 # function to extract all necessary files
 def extract() -> dict[str, pd.DataFrame | CSVSource]:
     """
