@@ -77,21 +77,21 @@ def extract_maint(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
         raise RuntimeError(f"Error reading maintenance data: {e}") from e
 
 
-def extract_techlog(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
+def extract_reports(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
     """"""
     try:
-        relevant_techlog_cols = [
+        relevant_reports_cols = [
             "aircraftregistration",
-            "executiondate",
+            "reportingdate",
             "reporteurclass",
             "reporteurID",
         ]
-        extracted_data["techlog"] = pd.read_sql(
-            f'SELECT {", ".join(relevant_techlog_cols)} FROM "AMOS"."technicallogbookorders"',
+        extracted_data["reports"] = pd.read_sql(
+            f'SELECT {", ".join(relevant_reports_cols)} FROM "AMOS"."postflightreports"',
             conn,
         )
     except Exception as e:
-        raise RuntimeError(f"Error reading techlog data: {e}") from e
+        raise RuntimeError(f"Error reading reports data: {e}") from e
 
 
 def extract_reporterslookup(
@@ -153,7 +153,7 @@ def extract() -> dict[str, pd.DataFrame | CSVSource]:
     extract_funcs = [
         extract_flights,
         extract_maint,
-        extract_techlog,
+        extract_reports,
         extract_reporterslookup,
         extract_aircraftlookup,
     ]

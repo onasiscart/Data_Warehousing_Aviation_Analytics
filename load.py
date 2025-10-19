@@ -1,21 +1,19 @@
 import pandas as pd
 from tqdm import tqdm
 from pygrametl.datasources import CSVSource
-from pygrametl.tables import CachedDimension, FactTable
+from pygrametl.tables import CachedDimension
 from dw import DW
 
 
-def load(dw: DW, data: dict[str, pd.DataFrame | CSVSource]):
+def load_dimensions(
+    dw: DW, data: dict[str, pd.DataFrame | CSVSource], dimension_tables: list[str]
+):
     """
-    Carrega les dades transformades dins del DW.
+    Carrega les dimensions dins del DW.
     dw: objecte DW del dw.py
     data: dict de DataFrames o CSVSource
+    dimension_tables: llista de noms de taules de dimensió
     """
-    # Definir ordre de càrrega: dimensions primer, fets després
-    dimension_tables = ["date", "aircraft", "airport"]
-    fact_tables = ["daily_aircraft", "total_maintenance"]
-
-    # Carregar dimensions primer
     for name in dimension_tables:
         if name not in data:
             continue
@@ -53,49 +51,65 @@ def load(dw: DW, data: dict[str, pd.DataFrame | CSVSource]):
         if error_count > 0:
             print(f"[WARN] {name}: {error_count} errors totals")
 
-    # COMMIT després de carregar totes les dimensions
+
+def load_daily_aircraft(dw: DW, dataset: pd.DataFrame):
+    table = getattr(dw, "daily_aircraft_fact")
+    iterator = dataset.to_dict("records")
+    total = len(dataset)
+    # Inserció fila per fila
+    error_count = 0
+    for row in tqdm(iterator, total=total, desc="Loading daily_aircraft"):
+        try:
+            if (
+                dw.aircraft_dim.lookup(row) is not None
+                and dw.date_dim.lookup(row) is not None
+            ):
+                table.insert(row)
+        except Exception as e:
+            error_count += 1
+            if error_count <= 5:
+                print(f"[ERROR] Error carregant fila a 'daily_aircraft': {e}")
+            continue
+
+
+def load_total_maintenance(dw: DW, dataset: pd.DataFrame):
+    table = getattr(dw, "total_maintenance_fact")
+    iterator = dataset.to_dict("records")
+    total = len(dataset)
+    # Inserció fila per fila
+    error_count = 0
+    for row in tqdm(iterator, total=total, desc="Loading total_maintenance"):
+        try:
+            if (
+                dw.aircraft_dim.lookup(row) is not None
+                and dw.airport_dim.lookup(row) is not None
+            ):
+                table.insert(row)
+        except Exception as e:
+            error_count += 1
+            if error_count <= 5:
+                print(f"[ERROR] Error carregant fila a 'total_maintenance': {e}")
+            continue
+
+
+def load(dw: DW, data: dict[str, pd.DataFrame | CSVSource]):
+    """
+    Carrega les dades transformades dins del DW.
+    dw: objecte DW del dw.py
+    data: dict de DataFrames o CSVSource
+    """
+
+    # load dimensions first
+    dimension_tables = ["aircraft", "date", "airport"]
+    load_dimensions(dw, data, dimension_tables)
     print("Committing dimensions...")
     dw.conn_pygrametl.commit()
 
-    # Carregar taules de fets
-    for name in fact_tables:
-        if name not in data:
-            continue
+    # load fact tables
+    load_daily_aircraft(dw, data["daily_aircraft"])
+    load_total_maintenance(dw, data["total_maintenance"])
 
-        dataset = data[name]
-
-        # Comprovar que hi ha taula associada al DW
-        if not hasattr(dw, f"{name}_fact"):
-            print(f"[WARN] Fact table '{name}' no té taula associada al DW.")
-            continue
-
-        table = getattr(dw, f"{name}_fact")
-
-        # Convertir dataset a iterable de dicts
-        if isinstance(dataset, pd.DataFrame):
-            iterator = dataset.to_dict("records")
-            total = len(dataset)
-        elif isinstance(dataset, CSVSource):
-            iterator = iter(dataset)
-            total = None
-        else:
-            raise TypeError(f"Dataset '{name}' no és DataFrame ni CSVSource.")
-
-        # Inserció fila per fila
-        error_count = 0
-        for row in tqdm(iterator, total=total, desc=f"Loading {name}"):
-            try:
-                table.insert(row)
-            except Exception as e:
-                error_count += 1
-                if error_count <= 5:
-                    print(f"[ERROR] Error carregant fila a '{name}': {e}")
-                continue
-
-        if error_count > 0:
-            print(f"[WARN] {name}: {error_count} errors totals")
-
-    # Commit final
     print("Committing fact tables...")
     dw.conn_pygrametl.commit()
+
     print("LOAD completed successfully")

@@ -36,7 +36,7 @@ def transform(data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     # Retrieve dataframes from the input dictionary
     flights_df = data["flights"]
     maint_df = data["maintenance"]
-    techlog_df = data["techlog"]
+    reports_df = data["reports"]
     lookup_reporters_df = data["lookup_reporters"]
     lookup_aircrafts = data["lookup_aircrafts"]  # CSVSource
 
@@ -44,13 +44,13 @@ def transform(data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
 
     agg_maint = transform_maint(maint_df)
 
-    transform_techlog(techlog_df)
+    transform_reports(reports_df)
 
     time, daily_flight_stats = merge_flights_maint_log(
-        agg_flights, agg_maint, techlog_df
+        agg_flights, agg_maint, reports_df
     )
     total_maint_reports = create_total_maint_reports(
-        agg_flights, techlog_df, lookup_reporters_df
+        agg_flights, reports_df, lookup_reporters_df
     )
 
     airports = lookup_reporters_df[["airport"]].drop_duplicates().reset_index(drop=True)
@@ -72,7 +72,7 @@ def to_timestamps(df: pd.DataFrame, columns: list[str]) -> None:
     Modifica el DataFrame original per referència.
     """
     for col in columns:
-        df[col] = pd.to_datetime(df[col])
+        df[col] = pd.to_datetime(df[col], format="%Y-%m-%d", errors="coerce")
 
 
 def transform_flights(flights_df: pd.DataFrame) -> pd.DataFrame:
@@ -207,18 +207,20 @@ def calc_maintenance_time(maint_df: pd.DataFrame) -> None:
     maint_df["TOSU"] = diff_days.where(~maint_df["programmed"], 0.0)
 
 
-def transform_techlog(techlog_df: pd.DataFrame) -> None:
+def transform_reports(reports_df: pd.DataFrame) -> None:
     """
-    Transform the techlog dataframe.
+    Transform the reports dataframe.
     """
     # Convert relevant columns to timestamps
-    to_timestamps(techlog_df, ["executiondate"])
-    techlog_df["date"] = techlog_df["executiondate"].apply(build_dateCode)
-    techlog_df.drop(columns=["executiondate"], inplace=True)
+    to_timestamps(reports_df, ["reportingdate"])
+    print(reports_df["reportingdate"].sort_values().head())
+    reports_df["date"] = reports_df["reportingdate"].apply(build_dateCode)
+
+    reports_df.drop(columns=["reportingdate"], inplace=True)
 
     # Create pilotreports and maintenancereports flags
-    techlog_df["pilotreports"] = (techlog_df["reporteurclass"] == "PIREP").astype(int)
-    techlog_df["maintenancereports"] = (techlog_df["reporteurclass"] == "MAREP").astype(
+    reports_df["pilotreports"] = (reports_df["reporteurclass"] == "PIREP").astype(int)
+    reports_df["maintenancereports"] = (reports_df["reporteurclass"] == "MAREP").astype(
         int
     )
 
