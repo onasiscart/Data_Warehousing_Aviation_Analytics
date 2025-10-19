@@ -77,6 +77,7 @@ def extract_maint(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
         raise RuntimeError(f"Error reading maintenance data: {e}") from e
 
 
+
 def extract_techlog(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
     """"""
     try:

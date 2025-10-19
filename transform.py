@@ -56,14 +56,16 @@ def transform(data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     )
 
     airports = lookup_reporters_df[["airport"]].drop_duplicates().reset_index(drop=True)
+    airports["airportcode_attr"] = airports["airport"]
     airports.rename(columns={"airport": "airportcode"}, inplace=True)
 
     return {
         "date": time,
-        "daily_aircraft": daily_flight_stats,
-        "total_maintenance": total_maint_reports,
         "aircraft": lookup_aircrafts,
         "airport": airports,
+        "daily_aircraft": daily_flight_stats,
+        "total_maintenance": total_maint_reports
+
     }
 
 
@@ -95,7 +97,7 @@ def transform_flights(flights_df: pd.DataFrame) -> pd.DataFrame:
         takeoffs=("takeoffs", "sum"),
         delays=("DY", "sum"),
         cancellations=("CN", "sum"),
-        delayed_minutes=("sumdelay", "sum"),
+        delayduration=("sumdelay", "sum"),
     )
 
     return agg_flights
@@ -125,7 +127,8 @@ def calculate_flight_attributes(flights_df: pd.DataFrame) -> None:
 
     # Canceled and delay in binaries
     flights_df.rename(columns={"cancelled": "CN"}, inplace=True)
-    flights_df["DY"] = flights_df["DELAY"].where(flights_df["DELAY"] > 0, 0)
+    flights_df["DY"] = (flights_df["DELAY"] > 0).astype(int)
+
 
     # Keep only relevant columns
     flights_df.drop(
@@ -205,7 +208,7 @@ def calc_maintenance_time(maint_df: pd.DataFrame) -> None:
     """
     # Compute the difference in days once
     diff_days = (
-        maint_df["scheduleddeparture"] - maint_df["scheduledarrival"]
+        maint_df["scheduledarrival"] - maint_df["scheduleddeparture"]
     ).dt.total_seconds() / (24 * 3600)
 
     # Assign TOSS and TOSU based on 'programmed'
@@ -314,7 +317,6 @@ def create_total_maint_reports(
 
     return total_maint_reports
 
-
 def merge_flights_maint_log(
     agg_flights_df: pd.DataFrame, agg_maint_df: pd.DataFrame, techlog_df: pd.DataFrame
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -338,9 +340,21 @@ def merge_flights_maint_log(
     time_df["month"] = time_df["date"].apply(build_monthCode)
     time_df["year"] = time_df["date"].dt.year
 
-    # Step 2: Merge aggregated flights and maintenance data
-    daily_flight_stats = techlog_df.merge(
-        agg_flights_df, on=["date", "aircraftregistration"], how="left"
-    ).merge(agg_maint_df, on=["date", "aircraftregistration"], how="left")
+    # Step 2: Drop non necessary columns 
+    techlog_proj = techlog_df.drop(
+        columns=[col for col in ["reporteurclass", "reporteurid"] if col in techlog_df.columns],
+        errors="ignore",
+    )
+
+    # Step 3: Merge all datasets (outer → keeps all data)
+    daily_flight_stats = (
+        techlog_proj
+        .merge(agg_flights_df, on=["date", "aircraftregistration"], how="outer")
+        .merge(agg_maint_df, on=["date", "aircraftregistration"], how="outer")
+    )
+
+    # Step 4: Fill NaN values with 0 for numeric columns
+    numeric_cols = daily_flight_stats.select_dtypes(include="number").columns
+    daily_flight_stats[numeric_cols] = daily_flight_stats[numeric_cols].fillna(0)
 
     return time_df, daily_flight_stats
