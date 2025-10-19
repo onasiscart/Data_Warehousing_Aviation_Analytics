@@ -8,7 +8,10 @@ duckdb_filename = "dw.duckdb"
 
 
 class DW:
+    # Data Warehouse class for managing DuckDB connections and operations
+
     def __init__(self, create=False):
+        """Initialize the DW object, creating or connecting to the DuckDB database."""
         if create and os.path.exists(duckdb_filename):
             os.remove(duckdb_filename)
         try:
@@ -18,19 +21,20 @@ class DW:
             print(f"Unable to connect to DuckDB database '{duckdb_filename}':", e)
             sys.exit(1)
 
+        # Create tables in DuckDB if required
         if create:
             try:
+                # dimensions tables first
                 self.conn_duckdb.execute(
                     """
                     CREATE TABLE Aircrafts (
-                        aircraftregistration VARCHAR(6),
+                        aircraftregistration VARCHAR(6) PRIMARY KEY,
                         model VARCHAR(100) NOT NULL,
                         manufacturer VARCHAR(100) NOT NULL,
-                        CONSTRAINT pk_aircraft PRIMARY KEY (aircraftregistration)
                     );
                 """
                 )
-                print("aircraft created successfully")
+                print("Aircrafts created successfully")
                 self.conn_duckdb.execute(
                     """
                     CREATE TABLE Date(
@@ -40,7 +44,7 @@ class DW:
                     );
                 """
                 )
-                print("date created successfully")
+                print("Date created successfully")
                 self.conn_duckdb.execute(
                     """
                     CREATE TABLE Airports(
@@ -50,14 +54,15 @@ class DW:
                     );
                 """
                 )
-                print("airports created successfully")
+                print("Airports created successfully")
+                # fact tables next
                 self.conn_duckdb.execute(
                     """
                     CREATE TABLE DailyAircraftStats (
                         date DATE,
                         aircraftregistration VARCHAR(6),
                         takeoffs INT NOT NULL,
-                        flight_hours REAL NOT NULL,
+                        flighthours REAL NOT NULL,
                         ADOSS REAL NOT NULL DEFAULT 0,
                         ADOSU REAL NOT NULL DEFAULT 0,
                         delays INT NOT NULL DEFAULT 0,
@@ -65,13 +70,13 @@ class DW:
                         delayduration REAL NOT NULL DEFAULT 0,
                         pilotreports INT NOT NULL DEFAULT 0,
                         maintenancereports INT NOT NULL DEFAULT 0,
-                        CONSTRAINT pk_daily_flight_info PRIMARY KEY (date, aircraftregistration),
-                        CONSTRAINT fk_aircraft FOREIGN KEY (aircraftregistration) REFERENCES Aircrafts(aircraftregistration),
-                        CONSTRAINT fk_date FOREIGN KEY (date) REFERENCES Date(date)
+                        PRIMARY KEY (date, aircraftregistration),
+                        FOREIGN KEY (aircraftregistration) REFERENCES Aircrafts(aircraftregistration),
+                        FOREIGN KEY (date) REFERENCES Date(date)
                     );
                 """
                 )
-                print("daily_flight_stats created successfully")
+                print("DailyAircraftStats created successfully")
                 self.conn_duckdb.execute(
                     """
                     CREATE TABLE TotalMaintenanceReports(
@@ -84,7 +89,7 @@ class DW:
                     );
                 """
                 )
-                print("total_maintenance_reports created successfully")
+                print("TotalMaintenanceReports created successfully")
                 self.conn_duckdb.commit()
 
             except duckdb.Error as e:
@@ -94,41 +99,43 @@ class DW:
         # Link DuckDB and pygrametl
         self.conn_pygrametl = pygrametl.ConnectionWrapper(self.conn_duckdb)
 
-        # ======================================================================================================= Dimension and fact table objects
-        # ================= Dimensions
+        # Create dimension and fact table pygrametl objects
         self.aircraft_dim = CachedDimension(
             name="Aircrafts",
             key="aircraftregistration",
             attributes=["model", "manufacturer"],
+            lookupatts=["aircraftregistration"],
         )
 
         self.date_dim = CachedDimension(
             name="Date",
             key="date",
             attributes=["month", "year"],
+            lookupatts=["date"],
         )
 
         self.airport_dim = CachedDimension(
             name="Airports",
             key="airportcode",
-            attributes=["airportcode_attr"],  # we add it as an attribute so pygrametl is happy
-            lookupatts=["airportcode"]
+            attributes=[
+                "airportcode_attr"
+            ],  # we add it as an attribute so pygrametl is happy
+            lookupatts=["airportcode"],
         )
 
-        
-
-        # ================= Fact tables
         self.daily_aircraft_fact = FactTable(
-            name="DailyAircraftStats",  # nom de la taula
-            keyrefs=("date", "aircraftregistration"),  # clau composta (FK a dimensions)
+            name="DailyAircraftStats",
+            keyrefs=("date", "aircraftregistration"),  # foreign key to dimensions
             measures=(
-                "flight_hours",
+                "flighthours",
                 "takeoffs",
                 "ADOSS",
                 "ADOSU",
                 "delays",
                 "cancellations",
                 "delayduration",
+                "pilotreports",
+                "maintenancereports",
             ),
         )
 
@@ -138,19 +145,21 @@ class DW:
             measures=("reports",),
         )
 
+    # Test queries for analysis
     def query_utilization(self):
+        """Query aircraft utilization statistics for each manufacturer and year."""
         result = self.conn_duckdb.execute(
             """SELECT 
                 ac.manufacturer,
                 d.year AS year,
-                ROUND(SUM(f.flight_hours)/COUNT(DISTINCT f.aircraftregistration), 2) AS FH,
+                ROUND(SUM(f.flighthours)/COUNT(DISTINCT f.aircraftregistration), 2) AS FH,
                 ROUND(SUM(f.takeoffs)/COUNT(DISTINCT f.aircraftregistration), 2) AS TakeOff,
                 ROUND(SUM(f.ADOSS)/COUNT(DISTINCT f.aircraftregistration), 2) AS ADOSS,
                 ROUND(SUM(f.ADOSU)/COUNT(DISTINCT f.aircraftregistration), 2) AS ADOSU,
                 ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2) AS ADOS,
                 365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2) AS ADIS,
                 ROUND(
-                    ROUND(SUM(f.flight_hours)/COUNT(DISTINCT f.aircraftregistration), 2) /
+                    ROUND(SUM(f.flighthours)/COUNT(DISTINCT f.aircraftregistration), 2) /
                     ((365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2)) * 24), 2
                 ) AS DU,
                 ROUND(
@@ -161,7 +170,7 @@ class DW:
                 100 * ROUND(SUM(f.cancellations)/ROUND(SUM(f.takeoffs), 2), 4) AS CNR,
                 100 - ROUND(100*(SUM(f.delays)+SUM(f.cancellations))/SUM(f.takeoffs), 2) AS TDR,
                 100 * ROUND(SUM(f.delayduration)/SUM(f.delays),2) AS ADD
-            FROM DailyAircraftStats f, Aircraft ac, Date d
+            FROM DailyAircraftStats f, Aircrafts ac, Date d
             WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
             GROUP BY ac.manufacturer, d.year
             ORDER BY ac.manufacturer, d.year;
@@ -170,6 +179,7 @@ class DW:
         return result
 
     def query_reporting(self):
+        """Query reporting rates for each manufacturer and year."""
         result = self.conn_duckdb.execute(
             """
             SELECT ac.manufacturer, d.year, 
@@ -184,14 +194,15 @@ class DW:
         return result
 
     def query_reporting_per_role(self):
+        """Query reporting rates per role for each manufacturer and year."""
         result = self.conn_duckdb.execute(
             """
             SELECT ac.manufacturer, d.year,
-                100*ROUND( SUM(f.pilotreports)/SUM(f.flighthours), 3) as PRRh,
-                100*ROUND( SUM(f.pilotreports)/SUM(f.takeoffs), 2) as PRRc,
-                100*ROUND( SUM(f.maintenancereports)/SUM(f.flighthours), 3) as MRRh,
-                100*ROUND( SUM(f.maintenancereports)/SUM(f.takeoffs), 2) as MRRc
-            FROM DailyFlightStats f, Aircrafts ac, Date d
+            100*ROUND( SUM(f.pilotreports)/SUM(f.flighthours), 3) as PRRh,
+            100*ROUND( SUM(f.pilotreports)/SUM(f.takeoffs), 2) as PRRc,
+            100*ROUND( SUM(f.maintenancereports)/SUM(f.flighthours), 3) as MRRh,
+            100*ROUND( SUM(f.maintenancereports)/SUM(f.takeoffs), 2) as MRRc
+            FROM DailyAircraftStats f, Aircrafts ac, Date d
             WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
             GROUP BY ac.manufacturer, d.year
             ORDER BY ac.manufacturer, d.year;
@@ -200,5 +211,6 @@ class DW:
         return result
 
     def close(self):
+        """Close the DW connections."""
         self.conn_pygrametl.commit()
         self.conn_pygrametl.close()

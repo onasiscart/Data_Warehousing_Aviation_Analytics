@@ -9,7 +9,7 @@ from pygrametl.datasources import CSVSource
 
 # ====================================================================================================================================
 # Connect to the PostgreSQL source
-path = Path("db_conf.txt")
+path = Path("dbconf2.txt")
 if not path.is_file():
     raise FileNotFoundError(
         f"Database configuration file '{path.absolute()}' not found."
@@ -77,28 +77,27 @@ def extract_maint(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
         raise RuntimeError(f"Error reading maintenance data: {e}") from e
 
 
-
 def extract_techlog(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
     """"""
     try:
-        relevant_amos_cols = [
+        relevant_techlog_cols = [
             "aircraftregistration",
             "executiondate",
             "reporteurclass",
             "reporteurID",
         ]
         extracted_data["techlog"] = pd.read_sql(
-            f'SELECT {", ".join(relevant_amos_cols)} FROM "AMOS"."technicallogbookorders"',
+            f'SELECT {", ".join(relevant_techlog_cols)} FROM "AMOS"."technicallogbookorders"',
             conn,
         )
     except Exception as e:
-        raise RuntimeError(f"Error reading technical logbook data: {e}") from e
+        raise RuntimeError(f"Error reading techlog data: {e}") from e
 
 
 def extract_reporterslookup(
     extracted_data: dict[str, pd.DataFrame | CSVSource],
 ) -> None:
-    """"""
+    """Extract reporter information from a CSV file."""
     path = "maintenance_personnel.csv"
     try:
         extracted_data["lookup_reporters"] = pd.read_csv(path)
@@ -117,24 +116,27 @@ def extract_aircraftlookup(extracted_data: dict[str, pd.DataFrame | CSVSource]) 
     try:
         # Llegir com DataFrame per normalitzar columnes
         df = pd.read_csv(path)
-        
+
         # Renombrar columnes per consistència amb el DW
-        df.rename(columns={
-            'aircraft_reg_code': 'aircraftregistration',
-            'aircraft_manufacturer': 'manufacturer',
-            'aircraft_model': 'model',
-            'manufacturer_serial_number': 'serialnumber'
-        }, inplace=True)
-        
+        df.rename(
+            columns={
+                "aircraft_reg_code": "aircraftregistration",
+                "aircraft_manufacturer": "manufacturer",
+                "aircraft_model": "model",
+                "manufacturer_serial_number": "serialnumber",
+            },
+            inplace=True,
+        )
+
         # Retornar com DataFrame (més fiable que CSVSource)
         extracted_data["lookup_aircrafts"] = df
-        
+
     except FileNotFoundError:
         raise FileNotFoundError(f"[extract_aircraftlookup] File {path} not found.")
     except Exception as e:
         raise RuntimeError(f"[extract_aircraftlookup] Error reading {path}: {e}") from e
-    
-    
+
+
 # function to extract all necessary files
 def extract() -> dict[str, pd.DataFrame | CSVSource]:
     """
@@ -174,19 +176,28 @@ def extract() -> dict[str, pd.DataFrame | CSVSource]:
 # Baseline queries
 def get_aircrafts_per_manufacturer() -> dict[str, list[str]]:
     """
-    Prec:
-    Returns: returns a dictionary with one entry per manufacturer and a list of aircraft identifiers as values
+    Returns a dictionary with one entry per manufacturer
+    and a list of aircraft identifiers as values.
     """
     path = "aircraft-manufacturerinfo-lookup.csv"
     aircrafts = {
         "Airbus": [],
         "Boeing": [],
     }
-    source = CSVSource(open(path, encoding="utf-8"), delimiter=",", encoding="utf-8")
-    for row in source:
-        manufacturer = row["manufacturer"]
-        registration = row["aircraftregistration"]
-        aircrafts[manufacturer].append(registration)
+
+    # Obrim el fitxer amb encoding i passem només el fitxer a CSVSource
+    with open(path, encoding="utf-8") as f:
+        source = CSVSource(f, delimiter=",")
+
+        for row in source:
+            manufacturer = row["aircraft_manufacturer"]
+            registration = row["aircraft_reg_code"]
+            if manufacturer in aircrafts:
+                aircrafts[manufacturer].append(registration)
+            else:
+                # Opcional: si hi ha altres fabricants
+                aircrafts[manufacturer] = [registration]
+
     return dict(aircrafts)
 
 
@@ -316,7 +327,7 @@ def query_reporting_baseline():
                 GROUP BY manufacturer, YEAR
                 )
         SELECT f1.manufacturer, f1.year,
-            1000*ROUND(f1.counter/f2.flightHours, 3) AS RRh,
+            100*ROUND(f1.counter/f2.flightHours, 3) AS RRh,
             100*ROUND(f1.counter/f2.flightCycles, 2) AS RRc               
         FROM atomic_data_reporting f1
             JOIN atomic_data_utilization f2 ON f2.manufacturer = f1.manufacturer AND f1.year = f2.year
