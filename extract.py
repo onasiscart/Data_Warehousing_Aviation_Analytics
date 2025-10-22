@@ -390,6 +390,286 @@ def query_reporting_per_role_baseline():
     return result
 
 
+def debug_baseline_days():
+    aircrafts = get_aircrafts_per_manufacturer()
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        WITH all_data AS (
+            SELECT aircraftregistration, scheduleddeparture::date as date
+            FROM "AIMS".flights
+            WHERE aircraftregistration IN ('{"','".join(aircrafts["Airbus"])}')
+              AND DATE_PART('year', scheduleddeparture) = 2023
+            UNION
+            SELECT aircraftregistration, scheduleddeparture::date as date
+            FROM "AIMS".maintenance  
+            WHERE aircraftregistration IN ('{"','".join(aircrafts["Airbus"])}')
+              AND DATE_PART('year', scheduleddeparture) = 2023
+        )
+        SELECT 
+            COUNT(*) as unique_combinations,
+            COUNT(DISTINCT aircraftregistration) as num_aircraft,
+            COUNT(DISTINCT date) as unique_dates
+        FROM all_data;
+    """
+    )
+    return cur.fetchall()
+
+
+def debug_baseline_exact_calculation():
+    aircrafts = get_aircrafts_per_manufacturer()
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        SELECT 
+            SUM(CASE WHEN cancelled THEN 0 ELSE 1 END)::numeric as total_takeoffs,
+            COUNT(DISTINCT aircraftregistration) as num_aircraft,
+            SUM(CASE WHEN cancelled THEN 0 ELSE 1 END)::numeric / COUNT(DISTINCT aircraftregistration) as division,
+            ROUND(SUM(CASE WHEN cancelled THEN 0 ELSE 1 END)::numeric / COUNT(DISTINCT aircraftregistration), 2) as rounded
+        FROM "AIMS".flights
+        WHERE aircraftregistration IN ('{"','".join(aircrafts["Airbus"])}')
+          AND DATE_PART('year', scheduleddeparture) = 2023;
+    """
+    )
+    return cur.fetchall()
+
+
+def debug_baseline_atomic():
+    aircrafts = get_aircrafts_per_manufacturer()
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        WITH atomic_data AS (
+            SELECT 
+                aircraftregistration,
+                CASE 
+                    WHEN aircraftregistration IN ('{"','".join(aircrafts.get("Airbus", []))}') THEN 'Airbus'
+                    WHEN aircraftregistration IN ('{"','".join(aircrafts.get("Boeing", []))}') THEN 'Boeing'
+                END AS manufacturer, 
+                DATE_PART('year', scheduleddeparture)::text AS year,
+                CASE WHEN cancelled THEN 0 ELSE 1 END AS flightCycles
+            FROM "AIMS".flights
+            WHERE DATE_PART('year', scheduleddeparture) = 2023
+            UNION ALL
+            SELECT 
+                aircraftregistration,
+                CASE 
+                    WHEN aircraftregistration IN ('{"','".join(aircrafts.get("Airbus", []))}') THEN 'Airbus'
+                    WHEN aircraftregistration IN ('{"','".join(aircrafts.get("Boeing", []))}') THEN 'Boeing'
+                END AS manufacturer, 
+                DATE_PART('year', scheduleddeparture)::text AS year,
+                0 AS flightCycles
+            FROM "AIMS".maintenance
+            WHERE DATE_PART('year', scheduleddeparture) = 2023
+        )
+        SELECT 
+            manufacturer,
+            SUM(flightCycles) as total_cycles,
+            COUNT(DISTINCT aircraftregistration) as num_aircraft,
+            SUM(flightCycles)::numeric / COUNT(DISTINCT aircraftregistration) as raw_avg,
+            ROUND(SUM(flightCycles)::numeric / COUNT(DISTINCT aircraftregistration), 2) as rounded_avg
+        FROM atomic_data
+        WHERE manufacturer = 'Airbus'
+        GROUP BY manufacturer;
+    """
+    )
+    return cur.fetchall()
+
+
+def debug_utilization_baseline():
+    aircrafts = get_aircrafts_per_manufacturer()
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        WITH atomic_data AS (
+            SELECT f.aircraftregistration,
+                CASE 
+                    WHEN f.aircraftregistration in ('{"','".join(aircrafts.get("Airbus", []))}') THEN 'Airbus'
+                    WHEN f.aircraftregistration in ('{"','".join(aircrafts.get("Boeing", []))}') THEN 'Boeing'
+                    ELSE f.aircraftregistration
+                    END AS manufacturer, 
+                DATE_PART('year', f.scheduleddeparture)::text AS year,
+                CASE WHEN f.cancelled 
+                    THEN 0
+                    ELSE EXTRACT(EPOCH FROM f.actualarrival-f.actualdeparture) / 3600
+                    END AS flightHours,
+                CASE WHEN f.cancelled 
+                    THEN 0
+                    ELSE 1
+                    END AS flightCycles,
+                CASE WHEN f.cancelled
+                    THEN 1
+                    ELSE 0
+                    END AS cancellations,
+                CASE WHEN f.cancelled
+                    THEN 0
+                    ELSE CASE WHEN EXTRACT(EPOCH FROM f.actualarrival - f.scheduledarrival) / 60 > 15
+                        THEN 1
+                        ELSE 0
+                        END
+                    END AS delays,
+                CASE WHEN f.cancelled
+                    THEN 0
+                    ELSE CASE WHEN EXTRACT(EPOCH FROM f.actualarrival - f.scheduledarrival) / 60 > 15
+                        THEN EXTRACT(EPOCH FROM f.actualarrival - f.scheduledarrival) / 60
+                        ELSE 0
+                        END
+                    END AS delayedMinutes,
+                0 AS scheduledOutOfService,
+                0 AS unScheduledOutOfService
+            FROM "AIMS".flights f
+            UNION ALL
+            SELECT m.aircraftregistration,           
+                CASE 
+                    WHEN m.aircraftregistration in ('{"','".join(aircrafts.get("Airbus", []))}') THEN 'Airbus'
+                    WHEN m.aircraftregistration in ('{"','".join(aircrafts.get("Boeing", []))}') THEN 'Boeing'
+                    ELSE m.aircraftregistration
+                    END AS manufacturer, 
+                DATE_PART('year', m.scheduleddeparture)::text AS year,
+                0 AS flightHours,
+                0 AS flightCycles,
+                0 AS cancellations,
+                0 AS delays,
+                0 AS delayedMinutes,
+                CASE WHEN m.programmed
+                    THEN EXTRACT(EPOCH FROM m.scheduledarrival-m.scheduleddeparture)/(24*3600)
+                    ELSE 0
+                    END AS scheduledOutOfService,
+                CASE WHEN m.programmed
+                    THEN 0
+                    ELSE EXTRACT(EPOCH FROM m.scheduledarrival-m.scheduleddeparture)/(24*3600)
+                    END AS unScheduledOutOfService
+            FROM "AIMS".maintenance m
+            )
+        SELECT a.manufacturer, a.year,
+            -- DEBUG: Valors intermedis per TakeOff
+            SUM(a.flightCycles) as sum_cycles,
+            COUNT(DISTINCT a.aircraftregistration) as count_aircraft,
+            SUM(a.flightCycles)::numeric / COUNT(DISTINCT a.aircraftregistration) as raw_division,
+            -- Valors originals
+            ROUND(SUM(a.flightHours)/COUNT(DISTINCT a.aircraftregistration), 2) AS FH,
+            ROUND(SUM(a.flightCycles)/COUNT(DISTINCT a.aircraftregistration), 2) AS TakeOff,
+            ROUND(SUM(a.scheduledOutOfService)/COUNT(DISTINCT a.aircraftregistration), 2) AS ADOSS,
+            ROUND(SUM(a.unscheduledOutOfService)/COUNT(DISTINCT a.aircraftregistration), 2) AS ADOSU,
+            ROUND((SUM(a.scheduledOutOfService)+SUM(a.unscheduledOutOfService))/COUNT(DISTINCT a.aircraftregistration), 2) AS ADOS,
+            365-ROUND((SUM(a.scheduledOutOfService)+SUM(a.unscheduledOutOfService))/COUNT(DISTINCT a.aircraftregistration), 2) AS ADIS,
+            ROUND(ROUND(SUM(a.flightHours)/COUNT(DISTINCT a.aircraftregistration), 2)/((365-ROUND((SUM(a.scheduledOutOfService)+SUM(a.unscheduledOutOfService))/COUNT(DISTINCT a.aircraftregistration), 2))*24), 2) AS DU,
+            ROUND(ROUND(SUM(a.flightCycles)/COUNT(DISTINCT a.aircraftregistration), 2)/(365-ROUND((SUM(a.scheduledOutOfService)+SUM(a.unscheduledOutOfService))/COUNT(DISTINCT a.aircraftregistration), 2)), 2) AS DC,
+            100*ROUND(SUM(delays)/ROUND(SUM(a.flightCycles), 2), 4) AS DYR,
+            100*ROUND(SUM(a.cancellations)/ROUND(SUM(a.flightCycles), 2), 4) AS CNR,
+            100-ROUND(100*(SUM(delays)+SUM(cancellations))/SUM(a.flightCycles), 2) AS TDR,
+            100*ROUND(SUM(delayedMinutes)/SUM(delays),2) AS ADD
+        FROM atomic_data a
+        GROUP BY a.manufacturer, a.year
+        ORDER BY a.manufacturer, a.year;
+        """
+    )
+    result = cur.fetchall()
+    cur.close()
+    return result
+
+
+def debug_baseline_tdr():
+    aircrafts = get_aircrafts_per_manufacturer()
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        WITH atomic_data AS (
+            SELECT f.aircraftregistration,
+                CASE 
+                    WHEN f.aircraftregistration in ('{"','".join(aircrafts.get("Airbus", []))}') THEN 'Airbus'
+                    WHEN f.aircraftregistration in ('{"','".join(aircrafts.get("Boeing", []))}') THEN 'Boeing'
+                END AS manufacturer, 
+                DATE_PART('year', f.scheduleddeparture)::text AS year,
+                CASE WHEN f.cancelled THEN 0 ELSE 1 END AS flightCycles,
+                CASE WHEN f.cancelled THEN 1 ELSE 0 END AS cancellations,
+                CASE WHEN f.cancelled THEN 0
+                    ELSE CASE WHEN EXTRACT(EPOCH FROM f.actualarrival - f.scheduledarrival) / 60 > 15
+                        THEN 1 ELSE 0 END
+                END AS delays
+            FROM "AIMS".flights f
+            UNION ALL
+            SELECT m.aircraftregistration,
+                CASE 
+                    WHEN m.aircraftregistration in ('{"','".join(aircrafts.get("Airbus", []))}') THEN 'Airbus'
+                    WHEN m.aircraftregistration in ('{"','".join(aircrafts.get("Boeing", []))}') THEN 'Boeing'
+                END AS manufacturer, 
+                DATE_PART('year', m.scheduleddeparture)::text AS year,
+                0 AS flightCycles,
+                0 AS cancellations,
+                0 AS delays
+            FROM "AIMS".maintenance m
+        )
+        SELECT 
+            a.manufacturer, 
+            a.year,
+            SUM(a.flightCycles) as total_takeoffs,
+            SUM(delays) as total_delays,
+            SUM(cancellations) as total_cancellations,
+            SUM(delays) + SUM(cancellations) as sum_delays_cancel,
+            (SUM(delays) + SUM(cancellations))::numeric / SUM(a.flightCycles) as ratio,
+            100.0 * (SUM(delays) + SUM(cancellations)) / SUM(a.flightCycles) as percentage_bad,
+            ROUND(100*(SUM(delays)+SUM(cancellations))/SUM(a.flightCycles), 2) as rounded_percentage,
+            100 - ROUND(100*(SUM(delays)+SUM(cancellations))/SUM(a.flightCycles), 2) AS TDR
+        FROM atomic_data a
+        GROUP BY a.manufacturer, a.year
+        ORDER BY a.manufacturer, a.year;
+    """
+    )
+    result = cur.fetchall()
+    cur.close()
+    return result
+
+
+def debug_baseline_aircraft_count():
+    aircrafts = get_aircrafts_per_manufacturer()
+    cur = conn.cursor()
+
+    # Avions a flights
+    cur.execute(
+        f"""
+        SELECT COUNT(DISTINCT aircraftregistration)
+        FROM "AIMS".flights
+        WHERE aircraftregistration IN ('{"','".join(aircrafts["Airbus"])}')
+          AND DATE_PART('year', scheduleddeparture) = 2023;
+    """
+    )
+    flights_count = cur.fetchone()[0]
+
+    # Avions a maintenance
+    cur.execute(
+        f"""
+        SELECT COUNT(DISTINCT aircraftregistration)
+        FROM "AIMS".maintenance
+        WHERE aircraftregistration IN ('{"','".join(aircrafts["Airbus"])}')
+          AND DATE_PART('year', scheduleddeparture) = 2023;
+    """
+    )
+    maint_count = cur.fetchone()[0]
+
+    # Avions en UNION
+    cur.execute(
+        f"""
+        SELECT COUNT(DISTINCT aircraftregistration)
+        FROM (
+            SELECT aircraftregistration FROM "AIMS".flights
+            WHERE aircraftregistration IN ('{"','".join(aircrafts["Airbus"])}')
+              AND DATE_PART('year', scheduleddeparture) = 2023
+            UNION
+            SELECT aircraftregistration FROM "AIMS".maintenance
+            WHERE aircraftregistration IN ('{"','".join(aircrafts["Airbus"])}')
+              AND DATE_PART('year', scheduleddeparture) = 2023
+        ) t;
+    """
+    )
+    union_count = cur.fetchone()[0]
+
+    cur.close()
+    return flights_count, maint_count, union_count
+
+
+# ====================================================================================================================================
+
 # ====================================================================================================================================ç
 
 if __name__ == "__main__":

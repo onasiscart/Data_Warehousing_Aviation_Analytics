@@ -120,10 +120,8 @@ class DW:
         self.airport_dim = CachedDimension(
             name="Airports",
             key="airportcode",
-            attributes=[
-                "airportcode_attr"
-            ],  # we add it as an attribute so pygrametl is happy
-            lookupatts=["airportcode"],
+            attributes=["iata_code"],  # we add it as an attribute so pygrametl is happy
+            lookupatts=["iata_code"],
         )
 
         self.daily_aircraft_fact = FactTable(
@@ -148,31 +146,30 @@ class DW:
             measures=("reports",),
         )
 
-    # Test queries for analysis
     def query_utilization(self):
         """Query aircraft utilization statistics for each manufacturer and year."""
         result = self.conn_duckdb.execute(
             """SELECT 
                 ac.manufacturer,
                 d.year AS year,
-                ROUND(SUM(f.flighthours)/COUNT(DISTINCT f.aircraftregistration), 2) AS FH,
-                ROUND(SUM(f.takeoffs)/COUNT(DISTINCT f.aircraftregistration), 2) AS TakeOff,
-                ROUND(SUM(f.ADOSS)/COUNT(DISTINCT f.aircraftregistration), 2) AS ADOSS,
-                ROUND(SUM(f.ADOSU)/COUNT(DISTINCT f.aircraftregistration), 2) AS ADOSU,
-                ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2) AS ADOS,
-                365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2) AS ADIS,
-                ROUND(
+                CAST(ROUND(SUM(f.flighthours)/COUNT(DISTINCT f.aircraftregistration), 2) AS DECIMAL(10,2)) AS FH,
+                CAST(ROUND((SUM(f.takeoffs) // COUNT(DISTINCT f.aircraftregistration))::DOUBLE, 2) AS DECIMAL(10,2)) AS TakeOff,
+                CAST(ROUND(SUM(f.ADOSS)/COUNT(DISTINCT f.aircraftregistration), 2) AS DECIMAL(10,2)) AS ADOSS,
+                CAST(ROUND(SUM(f.ADOSU)/COUNT(DISTINCT f.aircraftregistration), 2) AS DECIMAL(10,2)) AS ADOSU,
+                CAST(ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2) AS DECIMAL(10,2)) AS ADOS,
+                CAST(365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2) AS DECIMAL(10,2)) AS ADIS,
+                CAST(ROUND(
                     ROUND(SUM(f.flighthours)/COUNT(DISTINCT f.aircraftregistration), 2) /
                     ((365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2)) * 24), 2
-                ) AS DU,
-                ROUND(
-                    ROUND(SUM(f.takeoffs)/COUNT(DISTINCT f.aircraftregistration), 2) /
+                ) AS DECIMAL(10,2)) AS DU,
+                CAST(ROUND(
+                    ROUND((SUM(f.takeoffs) // COUNT(DISTINCT f.aircraftregistration))::DOUBLE, 2) /
                     (365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2)), 2
-                ) AS DC,
-                100 * ROUND(SUM(f.delays)/ROUND(SUM(f.takeoffs), 2), 4) AS DYR,
-                100 * ROUND(SUM(f.cancellations)/ROUND(SUM(f.takeoffs), 2), 4) AS CNR,
-                100 - ROUND(100*(SUM(f.delays)+SUM(f.cancellations))/SUM(f.takeoffs), 2) AS TDR,
-                100 * ROUND(SUM(f.delayduration)/SUM(f.delays),2) AS ADD
+                ) AS DECIMAL(10,2)) AS DC,
+                CAST(100 * ROUND(SUM(f.delays)/ROUND(SUM(f.takeoffs), 2), 4) AS DECIMAL(10,2)) AS DYR,
+                CAST(100 * ROUND(SUM(f.cancellations)/ROUND(SUM(f.takeoffs), 2), 4) AS DECIMAL(10,2)) AS CNR,
+                CAST(100 - ROUND((100*(SUM(f.delays)+SUM(f.cancellations)) // SUM(f.takeoffs))::DOUBLE, 2) AS DECIMAL(10,2)) AS TDR,
+                CAST(100 * ROUND(SUM(f.delayduration)/SUM(f.delays), 2) AS DECIMAL(10,2)) AS ADD
             FROM DailyAircraftStats f, Aircrafts ac, Date d
             WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
             GROUP BY ac.manufacturer, d.year
@@ -186,17 +183,42 @@ class DW:
         result = self.conn_duckdb.execute(
             """
             SELECT ac.manufacturer, d.year, 
-                100*ROUND(SUM(f.pilotreports+f.maintenancereports)/SUM(f.flighthours), 3) as RRh,
-                100*ROUND(SUM(f.pilotreports+f.maintenancereports)/SUM(f.takeoffs), 2) as RRc
+                CAST(100*ROUND(SUM(f.pilotreports+f.maintenancereports)/SUM(f.flighthours), 3) AS DECIMAL(10,3)) as RRh,
+                CAST(100*ROUND(SUM(f.pilotreports+f.maintenancereports)/SUM(f.takeoffs), 2) AS DECIMAL(10,2)) as RRc
             FROM DailyAircraftStats f, Aircrafts ac, Date d
             WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
             GROUP BY ac.manufacturer, d.year
             ORDER BY ac.manufacturer, d.year;
             """
-        ).fetchall()  # type: ignore
+        ).fetchall()
         return result
 
     def query_reporting_per_role(self):
+        """Query reporting rates per role for each manufacturer and year."""
+        result = self.conn_duckdb.execute(
+            """
+            SELECT ac.manufacturer, d.year, 'PIREP' as role,
+                CAST(100*ROUND(SUM(f.pilotreports)/SUM(f.flighthours), 3) AS DECIMAL(10,3)) as RRh,
+                CAST(100*ROUND(SUM(f.pilotreports)/SUM(f.takeoffs), 2) AS DECIMAL(10,2)) as RRc
+            FROM DailyAircraftStats f, Aircrafts ac, Date d
+            WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
+            GROUP BY ac.manufacturer, d.year
+            
+            UNION ALL
+            
+            SELECT ac.manufacturer, d.year, 'MAREP' as role,
+                CAST(100*ROUND(SUM(f.maintenancereports)/SUM(f.flighthours), 3) AS DECIMAL(10,3)) as RRh,
+                CAST(100*ROUND(SUM(f.maintenancereports)/SUM(f.takeoffs), 2) AS DECIMAL(10,2)) as RRc
+            FROM DailyAircraftStats f, Aircrafts ac, Date d
+            WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
+            GROUP BY ac.manufacturer, d.year
+            
+            ORDER BY manufacturer, year, role;
+            """
+        ).fetchall()  # type: ignore
+        return result
+
+    def query_reporting_per_role_2(self):
         """Query reporting rates per role for each manufacturer and year."""
         result = self.conn_duckdb.execute(
             """
@@ -211,6 +233,48 @@ class DW:
             ORDER BY ac.manufacturer, d.year;
             """
         ).fetchall()  # type: ignore
+        return result
+
+    def debug_days_per_aircraft(self):
+        """Compta quants dies diferents té cada avió al DW"""
+        result = self.conn_duckdb.execute(
+            """
+            SELECT 
+                ac.manufacturer,
+                d.year,
+                COUNT(*) as total_rows,
+                COUNT(DISTINCT f.aircraftregistration) as num_aircraft,
+                COUNT(DISTINCT f.date) as unique_dates,
+                COUNT(*) / COUNT(DISTINCT f.aircraftregistration) as avg_rows_per_aircraft
+            FROM DailyAircraftStats f
+            JOIN Aircrafts ac ON f.aircraftregistration = ac.aircraftregistration
+            JOIN Date d ON f.date = d.date
+            WHERE d.year = 2023 AND ac.manufacturer = 'Airbus'
+            GROUP BY ac.manufacturer, d.year;
+        """
+        ).fetchall()
+        return result
+
+    def debug_tdr(self):
+        result = self.conn_duckdb.execute(
+            """
+            SELECT 
+                ac.manufacturer,
+                d.year,
+                SUM(f.takeoffs) as total_takeoffs,
+                SUM(f.delays) as total_delays,
+                SUM(f.cancellations) as total_cancellations,
+                SUM(f.delays) + SUM(f.cancellations) as sum_delays_cancel,
+                (SUM(f.delays) + SUM(f.cancellations))::DOUBLE / SUM(f.takeoffs) as ratio,
+                100.0 * (SUM(f.delays) + SUM(f.cancellations)) / SUM(f.takeoffs) as percentage_bad,
+                ROUND(100.0*(SUM(f.delays)+SUM(f.cancellations))/SUM(f.takeoffs), 2) as rounded_percentage,
+                100 - ROUND(100.0*(SUM(f.delays)+SUM(f.cancellations))/SUM(f.takeoffs), 2) AS TDR
+            FROM DailyAircraftStats f, Aircrafts ac, Date d
+            WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
+            GROUP BY ac.manufacturer, d.year
+            ORDER BY ac.manufacturer, d.year;
+        """
+        ).fetchall()
         return result
 
     def close(self):
