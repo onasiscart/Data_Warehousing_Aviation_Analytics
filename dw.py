@@ -12,6 +12,7 @@ class DW:
 
     def __init__(self, create=False):
         """Initialize the DW object, creating or connecting to the DuckDB database."""
+        # connection
         if create and os.path.exists(duckdb_filename):
             os.remove(duckdb_filename)
         try:
@@ -82,7 +83,9 @@ class DW:
                     CREATE TABLE TotalMaintenanceReports(
                         airportcode VARCHAR(3),
                         aircraftregistration VARCHAR(6),
-                        reports INT,
+                        takeoffs INT NOT NULL,
+                        flighthours REAL NOT NULL,
+                        reports INT NOT NULL,
                         PRIMARY KEY (airportcode, aircraftregistration),
                         FOREIGN KEY (airportcode) REFERENCES Airports(airportcode),
                         FOREIGN KEY (aircraftregistration) REFERENCES Aircrafts(aircraftregistration)

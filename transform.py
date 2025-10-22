@@ -114,11 +114,16 @@ def calculate_flight_attributes(flights_df: pd.DataFrame) -> None:
 
     # Create additional columns
     flights_df["date"] = flights_df["scheduleddeparture"].apply(build_dateCode)
-    
+
     flights_df["flighthours"] = np.where(
-    ~flights_df["cancelled"],
-        ((flights_df["actualarrival"] - flights_df["actualdeparture"]).dt.total_seconds() / 3600).fillna(0),
-        0
+        ~flights_df["cancelled"],
+        (
+            (
+                flights_df["actualarrival"] - flights_df["actualdeparture"]
+            ).dt.total_seconds()
+            / 3600
+        ).fillna(0),
+        0,
     )
 
     flights_df["takeoffs"] = (~flights_df["cancelled"]).astype(int)
@@ -279,7 +284,6 @@ def create_total_maint_reports(
             lookup_df[["reporteurid", "airport"]], on="reporteurid", how="left"
         )
 
-
     # Step 1: Aggregate flight data by aircraft
     grouped_flights = agg_flights_df.groupby(
         "aircraftregistration", as_index=False
@@ -348,14 +352,12 @@ def merge_flights_maint_log(
     agg_flights_filtered = agg_flights_df[
         agg_flights_df["date"].dt.year.isin(valid_years)
     ].copy()
-    
+
     agg_maint_filtered = agg_maint_df[
         agg_maint_df["date"].dt.year.isin(valid_years)
     ].copy()
-    
-    techlog_filtered = techlog_df[
-        techlog_df["date"].dt.year.isin(valid_years)
-    ].copy()
+
+    techlog_filtered = techlog_df[techlog_df["date"].dt.year.isin(valid_years)].copy()
 
     print(f"Rows after year filtering:")
     print(f"  - Flights: {len(agg_flights_filtered)}")
@@ -363,11 +365,17 @@ def merge_flights_maint_log(
     print(f"  - Reports: {len(techlog_filtered)}")
 
     # Step 4: Build the time dimension from filtered dates
-    all_dates = pd.concat([
-        agg_flights_filtered["date"],
-        agg_maint_filtered["date"],
-        techlog_filtered["date"]
-    ]).dropna().unique()
+    all_dates = (
+        pd.concat(
+            [
+                agg_flights_filtered["date"],
+                agg_maint_filtered["date"],
+                techlog_filtered["date"],
+            ]
+        )
+        .dropna()
+        .unique()
+    )
 
     time_df = pd.DataFrame(sorted(all_dates), columns=["date"])
     time_df["month"] = time_df["date"].apply(build_monthCode)
@@ -391,21 +399,19 @@ def merge_flights_maint_log(
         ["date", "aircraftregistration"], as_index=False
     ).agg({"pilotreports": "sum", "maintenancereports": "sum"})
 
-    print(f"Total reports after grouping: PIREP={techlog_proj['pilotreports'].sum():.0f}, MAREP={techlog_proj['maintenancereports'].sum():.0f}")
+    print(
+        f"Total reports after grouping: PIREP={techlog_proj['pilotreports'].sum():.0f}, MAREP={techlog_proj['maintenancereports'].sum():.0f}"
+    )
 
     # Step 6: OUTER MERGE to keep all combinations of (date, aircraft)
     # First merge: flights + reports (OUTER)
     daily_flight_stats = agg_flights_filtered.merge(
-        techlog_proj,
-        on=["date", "aircraftregistration"],
-        how="outer"
+        techlog_proj, on=["date", "aircraftregistration"], how="outer"
     )
 
     # Second merge: + maintenance (OUTER)
     daily_flight_stats = daily_flight_stats.merge(
-        agg_maint_filtered,
-        on=["date", "aircraftregistration"],
-        how="outer"
+        agg_maint_filtered, on=["date", "aircraftregistration"], how="outer"
     )
 
     print(f"Total rows after merges: {len(daily_flight_stats)}")
@@ -415,7 +421,13 @@ def merge_flights_maint_log(
     daily_flight_stats[numeric_cols] = daily_flight_stats[numeric_cols].fillna(0)
 
     # Després del fillna, converteix a int les columnes que haurien de ser enteres
-    int_cols = ['takeoffs', 'delays', 'cancellations', 'pilotreports', 'maintenancereports']
+    int_cols = [
+        "takeoffs",
+        "delays",
+        "cancellations",
+        "pilotreports",
+        "maintenancereports",
+    ]
     for col in int_cols:
         if col in daily_flight_stats.columns:
             daily_flight_stats[col] = daily_flight_stats[col].astype(int)
@@ -428,8 +440,10 @@ def merge_flights_maint_log(
     print(f"  - Total ADOSS: {daily_flight_stats['ADOSS'].sum():.2f}")
     print(f"  - Total ADOSU: {daily_flight_stats['ADOSU'].sum():.2f}")
     print(f"  - Total pilotreports: {daily_flight_stats['pilotreports'].sum():.0f}")
-    print(f"  - Total maintenancereports: {daily_flight_stats['maintenancereports'].sum():.0f}")
-    
+    print(
+        f"  - Total maintenancereports: {daily_flight_stats['maintenancereports'].sum():.0f}"
+    )
+
     print(f"\nSample of daily_flight_stats:")
     print(daily_flight_stats.head(10))
 
