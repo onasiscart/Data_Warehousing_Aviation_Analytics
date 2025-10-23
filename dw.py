@@ -29,9 +29,10 @@ class DW:
                 self.conn_duckdb.execute(
                     """
                     CREATE TABLE Aircrafts (
-                        aircraftregistration VARCHAR(6) PRIMARY KEY,
+                        aircraftid INT PRIMARY KEY,
+                        aircraftregistration VARCHAR(6) UNIQUE NOT NULL,
                         model VARCHAR(100) NOT NULL,
-                        manufacturer VARCHAR(100) NOT NULL,
+                        manufacturer VARCHAR(100) NOT NULL
                     );
                 """
                 )
@@ -39,7 +40,8 @@ class DW:
                 self.conn_duckdb.execute(
                     """
                     CREATE TABLE Date(
-                        date DATE PRIMARY KEY,
+                        dateid INT PRIMARY KEY,
+                        date DATE UNIQUE NOT NULL,
                         month INT NOT NULL, --YYYYMM
                         year INT NOT NULL  --YYYY
                     );
@@ -49,9 +51,8 @@ class DW:
                 self.conn_duckdb.execute(
                     """
                     CREATE TABLE Airports(
-                        airportcode VARCHAR(3) PRIMARY KEY,
-                        airportcode_attr VARCHAR(3),
-
+                        airportid INT PRIMARY KEY,
+                        airportcode VARCHAR(3) UNIQUE NOT NULL
                     );
                 """
                 )
@@ -60,8 +61,8 @@ class DW:
                 self.conn_duckdb.execute(
                     """
                     CREATE TABLE DailyAircraftStats (
-                        date DATE,
-                        aircraftregistration VARCHAR(6),
+                        dateid INT,
+                        aircraftid INT,
                         takeoffs INT NOT NULL,
                         flighthours REAL NOT NULL,
                         ADOSS REAL NOT NULL DEFAULT 0,
@@ -71,9 +72,9 @@ class DW:
                         delayduration REAL NOT NULL DEFAULT 0,
                         pilotreports INT NOT NULL DEFAULT 0,
                         maintenancereports INT NOT NULL DEFAULT 0,
-                        PRIMARY KEY (date, aircraftregistration),
-                        FOREIGN KEY (aircraftregistration) REFERENCES Aircrafts(aircraftregistration),
-                        FOREIGN KEY (date) REFERENCES Date(date)
+                        PRIMARY KEY (dateid, aircraftid),
+                        FOREIGN KEY (aircraftid) REFERENCES Aircrafts(aircraftid),
+                        FOREIGN KEY (dateid) REFERENCES Date(dateid)
                     );
                 """
                 )
@@ -81,14 +82,14 @@ class DW:
                 self.conn_duckdb.execute(
                     """
                     CREATE TABLE TotalMaintenanceReports(
-                        airportcode VARCHAR(3),
-                        aircraftregistration VARCHAR(6),
+                        airportid INT,
+                        aircraftid INT,
                         takeoffs INT NOT NULL,
                         flighthours REAL NOT NULL,
                         reports INT NOT NULL,
-                        PRIMARY KEY (airportcode, aircraftregistration),
-                        FOREIGN KEY (airportcode) REFERENCES Airports(airportcode),
-                        FOREIGN KEY (aircraftregistration) REFERENCES Aircrafts(aircraftregistration)
+                        PRIMARY KEY (airportid, aircraftid),
+                        FOREIGN KEY (airportid) REFERENCES Airports(airportid),
+                        FOREIGN KEY (aircraftid) REFERENCES Aircrafts(aircraftid)
                     );
                 """
                 )
@@ -105,28 +106,28 @@ class DW:
         # Create dimension and fact table pygrametl objects
         self.aircraft_dim = CachedDimension(
             name="Aircrafts",
-            key="aircraftregistration",
-            attributes=["model", "manufacturer"],
+            key="aircraftid",
+            attributes=["aircraftregistration", "model", "manufacturer"],
             lookupatts=["aircraftregistration"],
         )
 
         self.date_dim = CachedDimension(
             name="Date",
-            key="date",
-            attributes=["month", "year"],
+            key="dateid",
+            attributes=["date", "month", "year"],
             lookupatts=["date"],
         )
 
         self.airport_dim = CachedDimension(
             name="Airports",
-            key="airportcode",
-            attributes=["iata_code"],  # we add it as an attribute so pygrametl is happy
-            lookupatts=["iata_code"],
+            key="airportid",
+            attributes=["airportcode"],
+            lookupatts=["airportcode"],
         )
 
         self.daily_aircraft_fact = FactTable(
             name="DailyAircraftStats",
-            keyrefs=("date", "aircraftregistration"),  # foreign key to dimensions
+            keyrefs=("dateid", "aircraftid"),  # foreign key to dimensions
             measures=(
                 "flighthours",
                 "takeoffs",
@@ -142,7 +143,7 @@ class DW:
 
         self.total_maintenance_fact = FactTable(
             name="TotalMaintenanceReports",
-            keyrefs=("airportcode", "aircraftregistration"),
+            keyrefs=("airportid", "aircraftid"),
             measures=("reports",),
         )
 
@@ -152,26 +153,26 @@ class DW:
             """SELECT 
                 ac.manufacturer,
                 d.year AS year,
-                CAST(ROUND(SUM(f.flighthours)/COUNT(DISTINCT f.aircraftregistration), 2) AS DECIMAL(10,2)) AS FH,
-                CAST(ROUND((SUM(f.takeoffs) // COUNT(DISTINCT f.aircraftregistration))::DOUBLE, 2) AS DECIMAL(10,2)) AS TakeOff,
-                CAST(ROUND(SUM(f.ADOSS)/COUNT(DISTINCT f.aircraftregistration), 2) AS DECIMAL(10,2)) AS ADOSS,
-                CAST(ROUND(SUM(f.ADOSU)/COUNT(DISTINCT f.aircraftregistration), 2) AS DECIMAL(10,2)) AS ADOSU,
-                CAST(ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2) AS DECIMAL(10,2)) AS ADOS,
-                CAST(365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2) AS DECIMAL(10,2)) AS ADIS,
+                CAST(ROUND(SUM(f.flighthours)/COUNT(DISTINCT ac.aircraftregistration), 2) AS DECIMAL(10,2)) AS FH,
+                CAST(ROUND((SUM(f.takeoffs) // COUNT(DISTINCT ac.aircraftregistration))::DOUBLE, 2) AS DECIMAL(10,2)) AS TakeOff,
+                CAST(ROUND(SUM(f.ADOSS)/COUNT(DISTINCT ac.aircraftregistration), 2) AS DECIMAL(10,2)) AS ADOSS,
+                CAST(ROUND(SUM(f.ADOSU)/COUNT(DISTINCT ac.aircraftregistration), 2) AS DECIMAL(10,2)) AS ADOSU,
+                CAST(ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT ac.aircraftregistration), 2) AS DECIMAL(10,2)) AS ADOS,
+                CAST(365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT ac.aircraftregistration), 2) AS DECIMAL(10,2)) AS ADIS,
                 CAST(ROUND(
-                    ROUND(SUM(f.flighthours)/COUNT(DISTINCT f.aircraftregistration), 2) /
-                    ((365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2)) * 24), 2
+                    ROUND(SUM(f.flighthours)/COUNT(DISTINCT ac.aircraftregistration), 2) /
+                    ((365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT ac.aircraftregistration), 2)) * 24), 2
                 ) AS DECIMAL(10,2)) AS DU,
                 CAST(ROUND(
-                    ROUND((SUM(f.takeoffs) // COUNT(DISTINCT f.aircraftregistration))::DOUBLE, 2) /
-                    (365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT f.aircraftregistration), 2)), 2
+                    ROUND((SUM(f.takeoffs) // COUNT(DISTINCT ac.aircraftregistration))::DOUBLE, 2) /
+                    (365 - ROUND((SUM(f.ADOSS)+SUM(f.ADOSU))/COUNT(DISTINCT ac.aircraftregistration), 2)), 2
                 ) AS DECIMAL(10,2)) AS DC,
                 CAST(100 * ROUND(SUM(f.delays)/ROUND(SUM(f.takeoffs), 2), 4) AS DECIMAL(10,2)) AS DYR,
                 CAST(100 * ROUND(SUM(f.cancellations)/ROUND(SUM(f.takeoffs), 2), 4) AS DECIMAL(10,2)) AS CNR,
                 CAST(100 - ROUND((100*(SUM(f.delays)+SUM(f.cancellations)) // SUM(f.takeoffs))::DOUBLE, 2) AS DECIMAL(10,2)) AS TDR,
                 CAST(100 * ROUND(SUM(f.delayduration)/SUM(f.delays), 2) AS DECIMAL(10,2)) AS ADD
             FROM DailyAircraftStats f, Aircrafts ac, Date d
-            WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
+            WHERE f.aircraftid = ac.aircraftid AND f.dateid = d.dateid
             GROUP BY ac.manufacturer, d.year
             ORDER BY ac.manufacturer, d.year;
             """
@@ -186,7 +187,7 @@ class DW:
                 CAST(100*ROUND(SUM(f.pilotreports+f.maintenancereports)/SUM(f.flighthours), 3) AS DECIMAL(10,3)) as RRh,
                 CAST(100*ROUND(SUM(f.pilotreports+f.maintenancereports)/SUM(f.takeoffs), 2) AS DECIMAL(10,2)) as RRc
             FROM DailyAircraftStats f, Aircrafts ac, Date d
-            WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
+            WHERE f.aircraftid = ac.aircraftid AND f.dateid = d.dateid
             GROUP BY ac.manufacturer, d.year
             ORDER BY ac.manufacturer, d.year;
             """
@@ -201,7 +202,7 @@ class DW:
                 CAST(100*ROUND(SUM(f.pilotreports)/SUM(f.flighthours), 3) AS DECIMAL(10,3)) as RRh,
                 CAST(100*ROUND(SUM(f.pilotreports)/SUM(f.takeoffs), 2) AS DECIMAL(10,2)) as RRc
             FROM DailyAircraftStats f, Aircrafts ac, Date d
-            WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
+            WHERE f.aircraftid = ac.aircraftid AND f.dateid = d.dateid
             GROUP BY ac.manufacturer, d.year
             
             UNION ALL
@@ -210,7 +211,7 @@ class DW:
                 CAST(100*ROUND(SUM(f.maintenancereports)/SUM(f.flighthours), 3) AS DECIMAL(10,3)) as RRh,
                 CAST(100*ROUND(SUM(f.maintenancereports)/SUM(f.takeoffs), 2) AS DECIMAL(10,2)) as RRc
             FROM DailyAircraftStats f, Aircrafts ac, Date d
-            WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
+            WHERE f.aircraftid = ac.aircraftid AND f.dateid = d.dateid
             GROUP BY ac.manufacturer, d.year
             
             ORDER BY manufacturer, year, role;
@@ -228,7 +229,7 @@ class DW:
             100*ROUND( SUM(f.maintenancereports)/SUM(f.flighthours), 3) as MRRh,
             100*ROUND( SUM(f.maintenancereports)/SUM(f.takeoffs), 2) as MRRc
             FROM DailyAircraftStats f, Aircrafts ac, Date d
-            WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
+            WHERE f.aircraftid = ac.aircraftid AND f.dateid = d.dateid
             GROUP BY ac.manufacturer, d.year
             ORDER BY ac.manufacturer, d.year;
             """
@@ -246,9 +247,9 @@ class DW:
                 COUNT(DISTINCT f.aircraftregistration) as num_aircraft,
                 COUNT(DISTINCT f.date) as unique_dates,
                 COUNT(*) / COUNT(DISTINCT f.aircraftregistration) as avg_rows_per_aircraft
-            FROM DailyAircraftStats f
-            JOIN Aircrafts ac ON f.aircraftregistration = ac.aircraftregistration
-            JOIN Date d ON f.date = d.date
+            FROM DailyAircraftStats f, Aircrafts ac, Date d
+            JOIN Aircrafts ac ON f.aircraftid = ac.aircraftid
+            JOIN Date d ON f.dateid = d.dateid
             WHERE d.year = 2023 AND ac.manufacturer = 'Airbus'
             GROUP BY ac.manufacturer, d.year;
         """

@@ -59,11 +59,12 @@ def load_daily_aircraft(dw: DW, dataset: pd.DataFrame):
     # Inserció fila per fila
     error_count = 0
     for row in tqdm(iterator, total=total, desc="Loading daily_aircraft"):
+        aircraftid = dw.aircraft_dim.lookup(row)
+        dateid = dw.date_dim.lookup(row)
         try:
-            if (
-                dw.aircraft_dim.lookup(row) is not None
-                and dw.date_dim.lookup(row) is not None
-            ):
+            if aircraftid is not None and dateid is not None:
+                row["aircraftid"] = aircraftid
+                row["dateid"] = dateid
                 table.insert(row)
         except Exception as e:
             error_count += 1
@@ -79,11 +80,12 @@ def load_total_maintenance(dw: DW, dataset: pd.DataFrame):
     # Inserció fila per fila
     error_count = 0
     for row in tqdm(iterator, total=total, desc="Loading total_maintenance"):
+        aircraftid = dw.aircraft_dim.lookup(row)
+        airportid = dw.airport_dim.lookup(row)
         try:
-            if (
-                dw.aircraft_dim.lookup(row) is not None
-                and dw.airport_dim.lookup(row) is not None
-            ):
+            if aircraftid is not None and airportid is not None:
+                row["aircraftid"] = aircraftid
+                row["airportid"] = airportid
                 table.insert(row)
         except Exception as e:
             error_count += 1
