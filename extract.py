@@ -119,14 +119,16 @@ def extract_reporterslookup(
         ) from e
 
 
-def extract_aircraftlookup(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
+def extract_aircraftlookup(extracted_data: dict[str, CSVSource]) -> None:
     """
     Prec: aircraft-manufacturerinfo-lookup.csv exists in the working directory
-    Post: extracts aircraft manufacturer info from a CSV file and store it in extracted_data.
+    Post: extracts aircraft manufacturer info from a CSV file and stores it as a CSVSource in extracted_data.
     """
     path = "aircraft-manufacturerinfo-lookup.csv"
     try:
-        extracted_data["lookup_aircrafts"] = pd.read_csv(path)
+        f = open(path, "r", 16384, encoding="utf-8")  # recomanat per pygrametl
+        csv_source = CSVSource(f=f, delimiter=",")  # crea la font
+        extracted_data["lookup_aircrafts"] = csv_source
     except FileNotFoundError:
         raise FileNotFoundError(f"[extract_aircraftlookup] File {path} not found.")
     except Exception as e:

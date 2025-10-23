@@ -1,17 +1,19 @@
 import pandas as pd
 from tqdm import tqdm
-from pygrametl.datasources import CSVSource
+from pygrametl.datasources import TransformingSource
 from pygrametl.tables import CachedDimension
 from dw import DW
 
 
 def load_dimensions(
-    dw: DW, data: dict[str, pd.DataFrame | CSVSource], dimension_tables: list[str]
+    dw: DW,
+    data: dict[str, pd.DataFrame | TransformingSource],
+    dimension_tables: list[str],
 ):
     """
     Carrega les dimensions dins del DW.
     dw: objecte DW del dw.py
-    data: dict de DataFrames o CSVSource
+    data: dict de DataFrames o TransformingSource
     dimension_tables: llista de noms de taules de dimensió
     """
     for name in dimension_tables:
@@ -31,11 +33,9 @@ def load_dimensions(
         if isinstance(dataset, pd.DataFrame):
             iterator = dataset.to_dict("records")
             total = len(dataset)
-        elif isinstance(dataset, CSVSource):
+        else:  # transforming source
             iterator = iter(dataset)
             total = None
-        else:
-            raise TypeError(f"Dataset '{name}' no és DataFrame ni CSVSource.")
 
         # Inserció fila per fila
         error_count = 0
@@ -94,11 +94,11 @@ def load_total_maintenance(dw: DW, dataset: pd.DataFrame):
             continue
 
 
-def load(dw: DW, data: dict[str, pd.DataFrame | CSVSource]):
+def load(dw: DW, data: dict[str, pd.DataFrame | TransformingSource]):
     """
     Carrega les dades transformades dins del DW.
     dw: objecte DW del dw.py
-    data: dict de DataFrames o CSVSource
+    data: dict de DataFrames o TransformingSource
     """
 
     # load dimensions first

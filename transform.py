@@ -4,6 +4,7 @@ import logging
 import pandas as pd
 from typing import Dict
 import numpy as np
+from pygrametl.datasources import CSVSource, TransformingSource
 
 # Configure logging
 logging.basicConfig(
@@ -29,22 +30,24 @@ def build_monthCode(date: pd.Timestamp) -> str:
 # transformation functions
 
 
-def transform_aircrafts(lookup_aircrafts: pd.DataFrame) -> None:
+def clean_aircraft_row(row: dict):
+    # Renombrar camps
+    row["aircraftregistration"] = row.pop("aircraft_reg_code", None)
+    row["manufacturer"] = row.pop("aircraft_manufacturer", None)
+    row["model"] = row.pop("aircraft_model", None)
+    # Eliminar serial si existeix
+    row.pop("manufacturer_serial_number", None)
+    return row  # TransformingSource espera que la funció retorni la fila
+
+
+def transform_aircrafts(lookup_aircrafts: CSVSource) -> TransformingSource:
     """
-    Prec: lookup_aircrafts DataFrame with raw data extracted from CSV
-    Post: modifies lookup_aircrafts to have column names and columns consistent with the DW schema
+    Prec: lookup_aircrafts és un CSVSource amb les columnes brutes del CSV.
+    Post: retorna un TransformingSource (lazy) amb les columnes modificades.
     """
-    # Rename columns for consistency with DW
-    lookup_aircrafts.rename(
-        columns={
-            "aircraft_reg_code": "aircraftregistration",
-            "aircraft_manufacturer": "manufacturer",
-            "aircraft_model": "model",
-        },
-        inplace=True,
-    )
-    # Drop serial number
-    lookup_aircrafts.drop(columns=["manufacturer_serial_number"], inplace=True)
+    # Crida correcta: primer el source, després una o més funcions
+    transformed = TransformingSource(lookup_aircrafts, clean_aircraft_row)
+    return transformed
 
 
 def transform_reporter_lookup(lookup_reporters_df: pd.DataFrame) -> pd.DataFrame:
@@ -57,7 +60,9 @@ def transform_reporter_lookup(lookup_reporters_df: pd.DataFrame) -> pd.DataFrame
     return airports
 
 
-def transform(data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+def transform(
+    data: Dict[str, pd.DataFrame | CSVSource],
+) -> Dict[str, pd.DataFrame | TransformingSource]:
     """
     Prec: data (dict{str, pd.DataFrame}): Dictionary of dataframes to transform.
     Post: returns dictionary of transformed data ready to load as dataframes
@@ -72,7 +77,7 @@ def transform(data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     lookup_aircrafts = data["lookup_aircrafts"]
 
     # rename and project
-    transform_aircrafts(lookup_aircrafts)
+    aircrafts = transform_aircrafts(lookup_aircrafts)
     airports = transform_reporter_lookup(lookup_reporters_df)
     # calculate aggregate data (GROUP BY)
     agg_flights = transform_flights(flights_df)
@@ -88,10 +93,10 @@ def transform(data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     # return tables ready for loading
     return {
         "date": time,
-        "aircraft": lookup_aircrafts,
+        "aircraft": aircrafts,
         "airport": airports,
         "daily_aircraft": daily_flight_stats,
-        "total_maintenance": total_maint_reports,
+        "total_maintenance": total_maint_reports,  # type: ignore
     }
 
 
