@@ -1,3 +1,4 @@
+from duckdb import df
 from tqdm import tqdm
 import logging
 import pandas as pd
@@ -12,26 +13,55 @@ logging.basicConfig(
 )
 
 
+# ====================================================================================================================================
 # Utility functions for date codes
-def build_dateCode(date) -> str:
+def build_dateCode(date: pd.Timestamp) -> str:
     """build a dateCode string 'YYYY-MM-DD' from a datetime object"""
     return f"{date.year}-{date.month}-{date.day}"
 
 
-def build_monthCode(date) -> str:
+def build_monthCode(date: pd.Timestamp) -> str:
     """build a monthCode string 'YYYYMM' from a datetime object"""
     return f"{date.year}{str(date.month).zfill(2)}"
 
 
+# ====================================================================================================================================
+# transformation functions
+
+
+def transform_aircrafts(lookup_aircrafts: pd.DataFrame) -> None:
+    """
+    Prec: lookup_aircrafts DataFrame with raw data extracted from CSV
+    Post: modifies lookup_aircrafts to have column names and columns consistent with the DW schema
+    """
+    # Rename columns for consistency with DW
+    lookup_aircrafts.rename(
+        columns={
+            "aircraft_reg_code": "aircraftregistration",
+            "aircraft_manufacturer": "manufacturer",
+            "aircraft_model": "model",
+        },
+        inplace=True,
+    )
+    # Drop serial number
+    lookup_aircrafts.drop(columns=["manufacturer_serial_number"], inplace=True)
+
+
+def transform_reporter_lookup(lookup_reporters_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Prec: lookup_reporters_df DataFrame with data (reporteurID, airport) extracted from CSV
+    Post: returns Dataframe with column "airportcode"
+    """
+    airports = lookup_reporters_df[["airport"]].drop_duplicates().reset_index(drop=True)
+    airports.rename(columns={"airport": "airportcode"}, inplace=True)
+    return airports
+
+
 def transform(data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     """
-    Apply all transformations to the dataframes in the input dictionary.
-
-    Args:
-        data (dict{str, pd.DataFrame}): Dictionary of dataframes to transform.
-
-    Returns:
-        dict{str, pd.DataFrame}: Dictionary of transformed dataframes ready to load.
+    Prec: data (dict{str, pd.DataFrame}): Dictionary of dataframes to transform.
+    Post: returns dictionary of transformed data ready to load as dataframes
+    (EXCEPT aircraft which is a pygrametl CSVSource)
     """
 
     # Retrieve dataframes from the input dictionary
@@ -39,25 +69,23 @@ def transform(data: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     maint_df = data["maintenance"]
     reports_df = data["reports"]
     lookup_reporters_df = data["lookup_reporters"]
-    lookup_aircrafts = data["lookup_aircrafts"]  # CSVSource
+    lookup_aircrafts = data["lookup_aircrafts"]
 
+    # rename and project
+    transform_aircrafts(lookup_aircrafts)
+    airports = transform_reporter_lookup(lookup_reporters_df)
+    # calculate aggregate data (GROUP BY)
     agg_flights = transform_flights(flights_df)
-
     agg_maint = transform_maint(maint_df)
-
     transform_reports(reports_df)
-
+    # JOIN data
     time, daily_flight_stats = merge_flights_maint_log(
         agg_flights, agg_maint, reports_df
     )
     total_maint_reports = create_total_maint_reports(
         agg_flights, reports_df, lookup_reporters_df, time
     )
-
-    airports = lookup_reporters_df[["airport"]].drop_duplicates().reset_index(drop=True)
-    airports["airportcode_attr"] = airports["airport"]
-    airports.rename(columns={"airport": "airportcode"}, inplace=True)
-
+    # return tables ready for loading
     return {
         "date": time,
         "aircraft": lookup_aircrafts,
@@ -81,12 +109,9 @@ def transform_flights(flights_df: pd.DataFrame) -> pd.DataFrame:
     Transform the flights dataframe: calculate attributes and optionally aggregate.
     Returns a new dataframe aggregated by date or other columns if needed.
     """
-
     # Step 1: calculate derived attributes
     calculate_flight_attributes(flights_df)
-
-    # Step 2: example groupby aggregation
-
+    # Step 2: groupby aggregation
     flights_df["sumdelay"] = flights_df["DELAY"]
     agg_flights = flights_df.groupby(
         ["date", "aircraftregistration"], as_index=False
@@ -105,16 +130,13 @@ def calculate_flight_attributes(flights_df: pd.DataFrame) -> None:
     Calculate derived attributes for the flights dataframe.
     Modifies flights_df in place.
     """
-
     # Convert relevant columns to timestamps
     to_timestamps(
         flights_df,
         ["actualdeparture", "actualarrival", "scheduleddeparture", "scheduledarrival"],
     )
-
-    # Create additional columns
+    # Create additional columns: date, flighthours, takeoffs, delay
     flights_df["date"] = flights_df["scheduleddeparture"].apply(build_dateCode)
-
     flights_df["flighthours"] = np.where(
         ~flights_df["cancelled"],
         (
@@ -125,16 +147,12 @@ def calculate_flight_attributes(flights_df: pd.DataFrame) -> None:
         ).fillna(0),
         0,
     )
-
     flights_df["takeoffs"] = (~flights_df["cancelled"]).astype(int)
-
     # Calculate delay if applicable
     calc_delay(flights_df)  # assigns "DELAY" in place
-
     # Canceled and delay in binaries
     flights_df.rename(columns={"cancelled": "CN"}, inplace=True)
     flights_df["DY"] = (flights_df["DELAY"] > 0).astype(int)
-
     # Keep only relevant columns
     flights_df.drop(
         columns=[
