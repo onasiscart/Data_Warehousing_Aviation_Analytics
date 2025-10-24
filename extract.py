@@ -6,7 +6,6 @@ import pandas as pd
 # https://pygrametl.org
 from pygrametl.datasources import CSVSource
 
-
 # ====================================================================================================================================
 # Connect to the PostgreSQL source
 path = Path("dbconf2.txt")
@@ -41,7 +40,7 @@ except Exception as e:
 # extracting functions
 
 
-def extract_flights(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
+def extract_flights(extracted_data: dict[str, pd.DataFrame]) -> None:
     """
     Prec: connection to DBBDA established in conn
     Post: Extract flight data from the database and store it in extracted_data as a DataFrame
@@ -62,7 +61,7 @@ def extract_flights(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None
         raise RuntimeError(f"Error reading flight data: {e}") from e
 
 
-def extract_maint(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
+def extract_maint(extracted_data: dict[str, pd.DataFrame]) -> None:
     """
     Prec: connection to DBBDA established in conn
     Post: Extract maintenance data from "AIMS.maintenance" and store it in extracted_data as a DataFrame
@@ -81,7 +80,7 @@ def extract_maint(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
         raise RuntimeError(f"Error reading maintenance data: {e}") from e
 
 
-def extract_reports(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None:
+def extract_reports(extracted_data: dict[str, pd.DataFrame]) -> None:
     """
     Prec: connection to DBBDA established in conn
     Post: Extract report data from "AMOS.postflightreports" and store it in the provided dictionary as a DataFrame
@@ -102,7 +101,7 @@ def extract_reports(extracted_data: dict[str, pd.DataFrame | CSVSource]) -> None
 
 
 def extract_reporterslookup(
-    extracted_data: dict[str, pd.DataFrame | CSVSource],
+    extracted_data: dict[str, pd.DataFrame],
 ) -> None:
     """
     Prec: maintenance_personnel.csv exists in the working directory
@@ -119,29 +118,27 @@ def extract_reporterslookup(
         ) from e
 
 
-def extract_aircraftlookup(extracted_data: dict[str, CSVSource]) -> None:
+def extract_aircraftlookup(extracted_data: dict[str, pd.DataFrame]) -> None:
     """
     Prec: aircraft-manufacturerinfo-lookup.csv exists in the working directory
-    Post: extracts aircraft manufacturer info from a CSV file and stores it as a CSVSource in extracted_data.
+    Post: extracts aircraft manufacturer info from a CSV file and store it in extracted_data.
     """
     path = "aircraft-manufacturerinfo-lookup.csv"
     try:
-        f = open(path, "r", 16384, encoding="utf-8")  # recomanat per pygrametl
-        csv_source = CSVSource(f=f, delimiter=",")  # crea la font
-        extracted_data["lookup_aircrafts"] = csv_source
+        extracted_data["lookup_aircrafts"] = pd.read_csv(path)
     except FileNotFoundError:
         raise FileNotFoundError(f"[extract_aircraftlookup] File {path} not found.")
     except Exception as e:
         raise RuntimeError(f"[extract_aircraftlookup] Error reading {path}: {e}") from e
 
 
-def extract() -> dict[str, pd.DataFrame | CSVSource]:
+def extract() -> dict[str, pd.DataFrame]:
     """
     Prec: connection to DBBDA established
     Post: returns dictionary with extracted tables (flights, maintenance, techlog, lookup_reporters) as dataframes
     and an aircraft lookup pygrametl iterable
     """
-    extracted_data: dict[str, pd.DataFrame | CSVSource] = {}
+    extracted_data: dict[str, pd.DataFrame] = {}
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     # actions that extract data from sources and save them in the extracted_data dictionary
@@ -320,7 +317,7 @@ def query_reporting_baseline():
                 GROUP BY manufacturer, YEAR
                 )
         SELECT f1.manufacturer, f1.year,
-            100*ROUND(f1.counter/f2.flightHours, 3) AS RRh,
+            1000*ROUND(f1.counter/f2.flightHours, 3) AS RRh,
             100*ROUND(f1.counter/f2.flightCycles, 2) AS RRc               
         FROM atomic_data_reporting f1
             JOIN atomic_data_utilization f2 ON f2.manufacturer = f1.manufacturer AND f1.year = f2.year
@@ -371,7 +368,7 @@ def query_reporting_per_role_baseline():
                 GROUP BY manufacturer, year, role
                 )
         SELECT f1.manufacturer, f1.year, f1.role,
-            100*ROUND(f1.counter/f2.flightHours, 3) AS RRh,
+            1000*ROUND(f1.counter/f2.flightHours, 3) AS RRh,
             100*ROUND(f1.counter/f2.flightCycles, 2) AS RRc              
         FROM atomic_data_reporting f1
             JOIN atomic_data_utilization f2 ON f2.manufacturer = f1.manufacturer AND f1.year = f2.year

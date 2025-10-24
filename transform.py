@@ -4,7 +4,6 @@ import logging
 import pandas as pd
 from typing import Dict
 import numpy as np
-from pygrametl.datasources import CSVSource, TransformingSource
 
 # Configure logging
 logging.basicConfig(
@@ -30,24 +29,22 @@ def build_monthCode(date: pd.Timestamp) -> str:
 # transformation functions
 
 
-def clean_aircraft_row(row: dict):
-    # Renombrar camps
-    row["aircraftregistration"] = row.pop("aircraft_reg_code", None)
-    row["manufacturer"] = row.pop("aircraft_manufacturer", None)
-    row["model"] = row.pop("aircraft_model", None)
-    # Eliminar serial si existeix
-    row.pop("manufacturer_serial_number", None)
-    return row  # TransformingSource espera que la funció retorni la fila
-
-
-def transform_aircrafts(lookup_aircrafts: CSVSource) -> TransformingSource:
+def transform_aircrafts(lookup_aircrafts: pd.DataFrame) -> None:
     """
-    Prec: lookup_aircrafts és un CSVSource amb les columnes brutes del CSV.
-    Post: retorna un TransformingSource (lazy) amb les columnes modificades.
+    Prec: lookup_aircrafts DataFrame with raw data extracted from CSV
+    Post: modifies lookup_aircrafts to have column names and columns consistent with the DW schema
     """
-    # Crida correcta: primer el source, després una o més funcions
-    transformed = TransformingSource(lookup_aircrafts, clean_aircraft_row)
-    return transformed
+    # Rename columns for consistency with DW
+    lookup_aircrafts.rename(
+        columns={
+            "aircraft_reg_code": "aircraftregistration",
+            "aircraft_manufacturer": "manufacturer",
+            "aircraft_model": "model",
+        },
+        inplace=True,
+    )
+    # Drop serial number
+    lookup_aircrafts.drop(columns=["manufacturer_serial_number"], inplace=True)
 
 
 def transform_reporter_lookup(lookup_reporters_df: pd.DataFrame) -> pd.DataFrame:
@@ -60,13 +57,169 @@ def transform_reporter_lookup(lookup_reporters_df: pd.DataFrame) -> pd.DataFrame
     return airports
 
 
+def check_rule_1_actualarrival_after_departure(flights_df: pd.DataFrame) -> None:
+    """
+    BR-1: actualArrival debe ser posterior a actualDeparture
+    Fix: Swap their values
+    Modifies flights_df in place
+    """
+    logging.info("Checking Rule 1: actualArrival > actualDeparture...")
+
+    # 1. BUSCAR ERRORS
+    # Filtrar vols no cancel·lats amb dates vàlides
+    mask = (
+        (~flights_df["cancelled"])
+        & (flights_df["actualarrival"].notna())
+        & (flights_df["actualdeparture"].notna())
+    )
+
+    valid_flights = flights_df[mask]
+
+    # Detectar violacions
+    violations = valid_flights[
+        valid_flights["actualarrival"] <= valid_flights["actualdeparture"]
+    ]
+
+    # 2. SOLUCIONAR ERRORS
+    if len(violations) > 0:
+        logging.warning(
+            f"Rule 1 violated: {len(violations)} flights with actualArrival <= actualDeparture"
+        )
+
+        # FIX: Swap values IN PLACE
+        for idx in violations.index:
+            temp = flights_df.at[idx, "actualarrival"]
+            flights_df.at[idx, "actualarrival"] = flights_df.at[idx, "actualdeparture"]
+            flights_df.at[idx, "actualdeparture"] = temp
+
+        logging.info(
+            f"Rule 1 fixed: Swapped {len(violations)} actualArrival/actualDeparture pairs"
+        )
+    else:
+        logging.info("Rule 1 passed: All flights have correct arrival/departure times")
+
+
+def check_rule_2_no_overlapping_flights(flights_df: pd.DataFrame) -> None:
+    """
+    BR-2: Two non-cancelled flights of the same aircraft cannot overlap
+    Fix: Ignore the first flight, but record the row in a log file
+    Modifies flights_df in place by dropping overlapping flights
+    """
+    logging.info("Checking Rule 2: No overlapping flights for same aircraft...")
+
+    LOG_FILE = "overlapping_flights.csv"
+
+    # 1. BUSCAR ERRORS
+    # Filtrar vols no cancel·lats
+    non_cancelled = flights_df[~flights_df["cancelled"]].copy()
+
+    # Ordenar per aircraft i departure
+    non_cancelled = non_cancelled.sort_values(
+        ["aircraftregistration", "actualdeparture"]
+    )
+
+    indices_to_remove = []
+    overlapping_rows = []
+
+    # Agrupar per aircraft
+    for aircraft, group in non_cancelled.groupby("aircraftregistration"):
+        group = group.sort_values("actualdeparture").reset_index()
+
+        for i in range(len(group) - 1):
+            current_idx = group.at[i, "index"]
+            current_arrival = group.at[i, "actualarrival"]
+            next_departure = group.at[i + 1, "actualdeparture"]
+
+            # Comprovar si hi ha overlap
+            if pd.notna(current_arrival) and pd.notna(next_departure):
+                if current_arrival > next_departure:
+                    # El vol actual overlaps amb el següent
+                    indices_to_remove.append(current_idx)
+                    overlapping_rows.append(flights_df.loc[current_idx].to_dict())
+
+    # 2. SOLUCIONAR ERRORS i 3. LOGGING
+    if overlapping_rows:
+        logging.warning(
+            f"Rule 2 violated: {len(overlapping_rows)} overlapping flights detected"
+        )
+
+        # 3. LOGGING: Guardar a CSV
+        overlapping_df = pd.DataFrame(overlapping_rows)
+
+        # Append o crear nou fitxer
+        try:
+            overlapping_df.to_csv(
+                LOG_FILE,
+                mode="a",
+                index=False,
+                header=not pd.io.common.file_exists(LOG_FILE),
+            )
+        except:
+            overlapping_df.to_csv(LOG_FILE, mode="w", index=False)
+
+        # 2. FIX: Eliminar les files overlapping IN PLACE
+        flights_df.drop(indices_to_remove, inplace=True)
+
+        logging.info(
+            f"Rule 2 fixed: Removed {len(overlapping_rows)} overlapping flights (logged to {LOG_FILE})"
+        )
+    else:
+        logging.info("Rule 2 passed: No overlapping flights detected")
+
+
+def check_rule_3_aircraft_exists(
+    reports_df: pd.DataFrame, aircrafts_df: pd.DataFrame
+) -> None:
+    """
+    BR-3: The aircraft registration in a post flight report must be an aircraft
+    Fix: Ignore the report, but record the row in a log file
+    Modifies reports_df in place by dropping invalid reports
+    """
+    logging.info("Checking Rule 3: All reports reference valid aircraft...")
+
+    LOG_FILE = "invalid_reports.csv"
+
+    # 1. BUSCAR ERRORS
+    # Obtenir set d'aircrafts vàlids
+    valid_aircrafts = set(aircrafts_df["aircraftregistration"].unique())
+
+    # Detectar reports amb aircraft invàlids
+    invalid_mask = ~reports_df["aircraftregistration"].isin(valid_aircrafts)
+    invalid_reports = reports_df[invalid_mask]
+
+    # 2. SOLUCIONAR ERRORS i 3. LOGGING
+    if len(invalid_reports) > 0:
+        logging.warning(
+            f"Rule 3 violated: {len(invalid_reports)} reports with invalid aircraft"
+        )
+
+        # 3. LOGGING: Guardar a CSV
+        try:
+            invalid_reports.to_csv(
+                LOG_FILE,
+                mode="a",
+                index=False,
+                header=not pd.io.common.file_exists(LOG_FILE),
+            )
+        except:
+            invalid_reports.to_csv(LOG_FILE, mode="w", index=False)
+
+        # 2. FIX: Eliminar les files invàlides IN PLACE
+        reports_df.drop(invalid_reports.index, inplace=True)
+
+        logging.info(
+            f"Rule 3 fixed: Removed {len(invalid_reports)} invalid reports (logged to {LOG_FILE})"
+        )
+    else:
+        logging.info("Rule 3 passed: All reports reference valid aircraft")
+
+
 def transform(
-    data: Dict[str, pd.DataFrame | CSVSource],
-) -> Dict[str, pd.DataFrame | TransformingSource]:
+    data: Dict[str, pd.DataFrame],
+) -> Dict[str, pd.DataFrame]:
     """
     Prec: data (dict{str, pd.DataFrame}): Dictionary of dataframes to transform.
     Post: returns dictionary of transformed data ready to load as dataframes
-    (EXCEPT aircraft which is a pygrametl CSVSource)
     """
 
     # Retrieve dataframes from the input dictionary
@@ -74,15 +227,22 @@ def transform(
     maint_df = data["maintenance"]
     reports_df = data["reports"]
     lookup_reporters_df = data["lookup_reporters"]
-    lookup_aircrafts = data["lookup_aircrafts"]
+    aircrafts = data["lookup_aircrafts"]
 
-    # rename and project
-    aircrafts = transform_aircrafts(lookup_aircrafts)
+    # rename and project lookups
+    transform_aircrafts(aircrafts)
     airports = transform_reporter_lookup(lookup_reporters_df)
+
+    # quality checks
+    check_rule_1_actualarrival_after_departure(flights_df)
+    check_rule_2_no_overlapping_flights(flights_df)
+    check_rule_3_aircraft_exists(reports_df, aircrafts)
+
     # calculate aggregate data (GROUP BY)
     agg_flights = transform_flights(flights_df)
     agg_maint = transform_maint(maint_df)
     transform_reports(reports_df)
+
     # JOIN data
     time, daily_flight_stats = merge_flights_maint_log(
         agg_flights, agg_maint, reports_df

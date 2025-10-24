@@ -184,7 +184,7 @@ class DW:
         result = self.conn_duckdb.execute(
             """
             SELECT ac.manufacturer, d.year, 
-                CAST(100*ROUND(SUM(f.pilotreports+f.maintenancereports)/SUM(f.flighthours), 3) AS DECIMAL(10,3)) as RRh,
+                CAST(1000*ROUND(SUM(f.pilotreports+f.maintenancereports)/SUM(f.flighthours), 3) AS DECIMAL(10,3)) as RRh,
                 CAST(100*ROUND(SUM(f.pilotreports+f.maintenancereports)/SUM(f.takeoffs), 2) AS DECIMAL(10,2)) as RRc
             FROM DailyAircraftStats f, Aircrafts ac, Date d
             WHERE f.aircraftid = ac.aircraftid AND f.dateid = d.dateid
@@ -208,7 +208,7 @@ class DW:
             UNION ALL
             
             SELECT ac.manufacturer, d.year, 'MAREP' as role,
-                CAST(100*ROUND(SUM(f.maintenancereports)/SUM(f.flighthours), 3) AS DECIMAL(10,3)) as RRh,
+                CAST(1000*ROUND(SUM(f.maintenancereports)/SUM(f.flighthours), 3) AS DECIMAL(10,3)) as RRh,
                 CAST(100*ROUND(SUM(f.maintenancereports)/SUM(f.takeoffs), 2) AS DECIMAL(10,2)) as RRc
             FROM DailyAircraftStats f, Aircrafts ac, Date d
             WHERE f.aircraftid = ac.aircraftid AND f.dateid = d.dateid
