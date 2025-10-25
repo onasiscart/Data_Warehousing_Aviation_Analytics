@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 import psycopg2
 import pandas as pd
+import csv
 import warnings
 
 # ====================================================================================================================================
@@ -38,8 +39,6 @@ except Exception as e:
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 # Filter unwanted warnings out
 warnings.filterwarnings("ignore", message=".*pandas only supports SQLAlchemy.*")
-# error logging configuration
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 
 # ====================================================================================================================================
@@ -111,7 +110,7 @@ def extract_reporterslookup(
 ) -> None:
     """
     Prec: maintenance_personnel.csv exists in the working directory
-    Post: Extract reporter information from a CSV file and store it as a Dataframe in extracted_data
+    Post: Extract reporter information from CSV file and store it in extracted_data
     """
     path = "maintenance_personnel.csv"
     try:
@@ -127,7 +126,7 @@ def extract_reporterslookup(
 def extract_aircraftlookup(extracted_data: dict[str, pd.DataFrame]) -> None:
     """
     Prec: aircraft-manufacturerinfo-lookup.csv exists in the working directory
-    Post: extracts aircraft manufacturer info from a CSV file and store it in extracted_data.
+    Post: extracts aircraft manufacturer info from a CSV file and store it in extracted_data
     """
     path = "aircraft-manufacturerinfo-lookup.csv"
     try:
@@ -145,7 +144,7 @@ def extract() -> dict[str, pd.DataFrame]:
     and an aircraft lookup pygrametl iterable
     """
     extracted_data: dict[str, pd.DataFrame] = {}
-    # actions that extract data from sources and save them in the extracted_data dictionary
+    # Actions that extract data from sources and save them in the extracted_data dictionary
     extract_funcs = [
         extract_flights,
         extract_maint,
@@ -178,7 +177,6 @@ def get_aircrafts_per_manufacturer() -> dict[str, list[str]]:
         "Airbus": [],
         "Boeing": [],
     }
-
     with open(path, encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
