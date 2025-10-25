@@ -374,10 +374,3 @@ def query_reporting_per_role_baseline():
     result = cur.fetchall()
     cur.close()
     return result
-
-
-# ====================================================================================================================================
-
-if __name__ == "__main__":
-    main()
-    conn.close()
