@@ -4,9 +4,6 @@ import psycopg2
 import pandas as pd
 import warnings
 
-# https://pygrametl.org
-from pygrametl.datasources import CSVSource
-
 # ====================================================================================================================================
 # Connect to the PostgreSQL source
 path = Path("dbconf2.txt")
@@ -37,8 +34,9 @@ except Exception as e:
         f"Database configuration file '{path.absolute()}' not properly formatted (check file 'db_conf.example.txt'."
     )
 
-
-# Filter warnings
+# Configure logging for information and errors
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+# Filter unwanted warnings out
 warnings.filterwarnings("ignore", message=".*pandas only supports SQLAlchemy.*")
 # error logging configuration
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -51,7 +49,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 def extract_flights(extracted_data: dict[str, pd.DataFrame]) -> None:
     """
     Prec: connection to DBBDA established in conn
-    Post: Extract flight data from AIMS.flights and store it in extracted_data as a DataFrame
+    Post: Extract flight data from AIMS.flights and store it in extracted_data
     """
     try:
         relevant_flight_cols = [
@@ -176,22 +174,19 @@ def get_aircrafts_per_manufacturer() -> dict[str, list[str]]:
     Post: Returns a dictionary with one entry per manufacturer and a list of aircraft identifiers as values.
     """
     path = "aircraft-manufacturerinfo-lookup.csv"
-    aircrafts = {
+    aircrafts: dict[str, list[str]] = {
         "Airbus": [],
         "Boeing": [],
     }
 
     with open(path, encoding="utf-8") as f:
-        # Read CSV file as iterable
-        source = CSVSource(f, delimiter=",")
-        # process rows to build the dictionary
-        for row in source:
+        reader = csv.DictReader(f)
+        for row in reader:
             manufacturer = row["aircraft_manufacturer"]
             registration = row["aircraft_reg_code"]
             if manufacturer in aircrafts:
                 aircrafts[manufacturer].append(registration)
-
-    return dict(aircrafts)
+    return aircrafts
 
 
 def query_utilization_baseline():
