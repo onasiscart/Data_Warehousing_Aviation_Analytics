@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 import psycopg2
 import pandas as pd
+import warnings
 
 # https://pygrametl.org
 from pygrametl.datasources import CSVSource
@@ -36,6 +37,13 @@ except Exception as e:
         f"Database configuration file '{path.absolute()}' not properly formatted (check file 'db_conf.example.txt'."
     )
 
+
+# Filter warnings
+warnings.filterwarnings("ignore", message=".*pandas only supports SQLAlchemy.*")
+# error logging configuration
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+
 # ====================================================================================================================================
 # extracting functions
 
@@ -43,7 +51,7 @@ except Exception as e:
 def extract_flights(extracted_data: dict[str, pd.DataFrame]) -> None:
     """
     Prec: connection to DBBDA established in conn
-    Post: Extract flight data from the database and store it in extracted_data as a DataFrame
+    Post: Extract flight data from AIMS.flights and store it in extracted_data as a DataFrame
     """
     try:
         relevant_flight_cols = [
@@ -139,8 +147,6 @@ def extract() -> dict[str, pd.DataFrame]:
     and an aircraft lookup pygrametl iterable
     """
     extracted_data: dict[str, pd.DataFrame] = {}
-
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     # actions that extract data from sources and save them in the extracted_data dictionary
     extract_funcs = [
         extract_flights,
@@ -150,15 +156,12 @@ def extract() -> dict[str, pd.DataFrame]:
         extract_aircraftlookup,
     ]
     for func in extract_funcs:
-        logging.info(f"Executing {func.__name__}...")
         try:
             func(extracted_data)
-            logging.info(f"{func.__name__} completed successfully.")
         except Exception as e:
             logging.critical(f"{func.__name__} failed: {e}")
             # stop pipeline in case of an error
             raise
-
     logging.info("Extraction completed successfully.")
     return extracted_data
 

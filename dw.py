@@ -144,7 +144,7 @@ class DW:
         self.total_maintenance_fact = FactTable(
             name="TotalMaintenanceReports",
             keyrefs=("airportid", "aircraftid"),
-            measures=("reports",),
+            measures=("reports", "takeoffs", "flighthours"),
         )
 
     def query_utilization(self):
