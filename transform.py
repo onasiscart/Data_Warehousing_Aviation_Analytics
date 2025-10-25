@@ -1,5 +1,3 @@
-from duckdb import df
-from tqdm import tqdm
 import logging
 import pandas as pd
 from typing import Dict
@@ -184,7 +182,7 @@ def check_aircraft_exists(reports_df: pd.DataFrame, aircrafts_df: pd.DataFrame) 
         logging.info("BR-3 passed: All reports reference valid aircraft")
 
 
-def calc_delay(flights_df: pd.DataFrame) -> pd.Series:
+def calc_delay(flights_df: pd.DataFrame) -> None:
     """
     Prec: flights_df must contain columns 'actualarrival', 'scheduledarrival', 'cancelled'
     Post: flights_df will contain a new column 'DELAY' with the calculated delay in minutes.

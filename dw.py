@@ -3,6 +3,13 @@ import sys
 import duckdb  # https://duckdb.org
 import pygrametl  # https://pygrametl.org
 from pygrametl.tables import CachedDimension, FactTable
+import logging
+
+# Configure logging for information and errors
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+# ====================================================================================================================================
+# DW definition
 
 duckdb_filename = "dw.duckdb"
 
@@ -17,9 +24,11 @@ class DW:
             os.remove(duckdb_filename)
         try:
             self.conn_duckdb = duckdb.connect(duckdb_filename)
-            print("Connection to the DW created successfully")
+            logging.info("Connection to the DW created successfully")
         except duckdb.Error as e:
-            print(f"Unable to connect to DuckDB database '{duckdb_filename}':", e)
+            logging.error(
+                "Unable to connect to DuckDB database '%s': %s", duckdb_filename, e
+            )
             sys.exit(1)
 
         # Create tables in DuckDB if required
@@ -36,7 +45,6 @@ class DW:
                     );
                 """
                 )
-                print("Aircrafts created successfully")
                 self.conn_duckdb.execute(
                     """
                     CREATE TABLE Date(
@@ -47,7 +55,6 @@ class DW:
                     );
                 """
                 )
-                print("Date created successfully")
                 self.conn_duckdb.execute(
                     """
                     CREATE TABLE Airports(
@@ -56,7 +63,6 @@ class DW:
                     );
                 """
                 )
-                print("Airports created successfully")
                 # fact tables next
                 self.conn_duckdb.execute(
                     """
@@ -78,7 +84,6 @@ class DW:
                     );
                 """
                 )
-                print("DailyAircraftStats created successfully")
                 self.conn_duckdb.execute(
                     """
                     CREATE TABLE TotalMaintenanceReports(
@@ -93,11 +98,11 @@ class DW:
                     );
                 """
                 )
-                print("TotalMaintenanceReports created successfully")
                 self.conn_duckdb.commit()
+                logging.info("All DW tables created successfully")
 
             except duckdb.Error as e:
-                print("Error creating the DW tables:", e)
+                logging.error("Error creating the DW tables: %s", e)
                 sys.exit(2)
 
         # Link DuckDB and pygrametl
@@ -199,7 +204,7 @@ class DW:
         result = self.conn_duckdb.execute(
             """
             SELECT ac.manufacturer, d.year, 'PIREP' as role,
-                CAST(100*ROUND(SUM(f.pilotreports)/SUM(f.flighthours), 3) AS DECIMAL(10,3)) as RRh,
+                CAST(1000*ROUND(SUM(f.pilotreports)/SUM(f.flighthours), 3) AS DECIMAL(10,3)) as RRh,
                 CAST(100*ROUND(SUM(f.pilotreports)/SUM(f.takeoffs), 2) AS DECIMAL(10,2)) as RRc
             FROM DailyAircraftStats f, Aircrafts ac, Date d
             WHERE f.aircraftid = ac.aircraftid AND f.dateid = d.dateid
@@ -234,48 +239,6 @@ class DW:
             ORDER BY ac.manufacturer, d.year;
             """
         ).fetchall()  # type: ignore
-        return result
-
-    def debug_days_per_aircraft(self):
-        """Compta quants dies diferents té cada avió al DW"""
-        result = self.conn_duckdb.execute(
-            """
-            SELECT 
-                ac.manufacturer,
-                d.year,
-                COUNT(*) as total_rows,
-                COUNT(DISTINCT f.aircraftregistration) as num_aircraft,
-                COUNT(DISTINCT f.date) as unique_dates,
-                COUNT(*) / COUNT(DISTINCT f.aircraftregistration) as avg_rows_per_aircraft
-            FROM DailyAircraftStats f, Aircrafts ac, Date d
-            JOIN Aircrafts ac ON f.aircraftid = ac.aircraftid
-            JOIN Date d ON f.dateid = d.dateid
-            WHERE d.year = 2023 AND ac.manufacturer = 'Airbus'
-            GROUP BY ac.manufacturer, d.year;
-        """
-        ).fetchall()
-        return result
-
-    def debug_tdr(self):
-        result = self.conn_duckdb.execute(
-            """
-            SELECT 
-                ac.manufacturer,
-                d.year,
-                SUM(f.takeoffs) as total_takeoffs,
-                SUM(f.delays) as total_delays,
-                SUM(f.cancellations) as total_cancellations,
-                SUM(f.delays) + SUM(f.cancellations) as sum_delays_cancel,
-                (SUM(f.delays) + SUM(f.cancellations))::DOUBLE / SUM(f.takeoffs) as ratio,
-                100.0 * (SUM(f.delays) + SUM(f.cancellations)) / SUM(f.takeoffs) as percentage_bad,
-                ROUND(100.0*(SUM(f.delays)+SUM(f.cancellations))/SUM(f.takeoffs), 2) as rounded_percentage,
-                100 - ROUND(100.0*(SUM(f.delays)+SUM(f.cancellations))/SUM(f.takeoffs), 2) AS TDR
-            FROM DailyAircraftStats f, Aircrafts ac, Date d
-            WHERE f.aircraftregistration = ac.aircraftregistration AND f.date = d.date
-            GROUP BY ac.manufacturer, d.year
-            ORDER BY ac.manufacturer, d.year;
-        """
-        ).fetchall()
         return result
 
     def close(self):
