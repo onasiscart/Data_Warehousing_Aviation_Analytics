@@ -224,23 +224,6 @@ class DW:
         ).fetchall()  # type: ignore
         return result
 
-    def query_reporting_per_role_2(self):
-        """Query reporting rates per role for each manufacturer and year."""
-        result = self.conn_duckdb.execute(
-            """
-            SELECT ac.manufacturer, d.year,
-            100*ROUND( SUM(f.pilotreports)/SUM(f.flighthours), 3) as PRRh,
-            100*ROUND( SUM(f.pilotreports)/SUM(f.takeoffs), 2) as PRRc,
-            100*ROUND( SUM(f.maintenancereports)/SUM(f.flighthours), 3) as MRRh,
-            100*ROUND( SUM(f.maintenancereports)/SUM(f.takeoffs), 2) as MRRc
-            FROM DailyAircraftStats f, Aircrafts ac, Date d
-            WHERE f.aircraftid = ac.aircraftid AND f.dateid = d.dateid
-            GROUP BY ac.manufacturer, d.year
-            ORDER BY ac.manufacturer, d.year;
-            """
-        ).fetchall()  # type: ignore
-        return result
-
     def close(self):
         """Close the DW connections."""
         self.conn_pygrametl.commit()

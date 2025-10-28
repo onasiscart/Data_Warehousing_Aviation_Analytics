@@ -2,6 +2,8 @@ import logging
 import pandas as pd
 from typing import Dict
 import numpy as np
+from dw import DW
+from pygrametl.datasources import PandasSource, CSVSource, TransformingSource, SQLSource
 
 
 # Configure logging for information and errors
@@ -39,32 +41,40 @@ def to_timestamps(df: pd.DataFrame, columns: list[str]) -> None:
         df[col] = pd.to_datetime(df[col], format="%Y-%m-%d", errors="coerce")
 
 
-def transform_aircrafts(lookup_aircrafts: pd.DataFrame) -> None:
+def transform_aircrafts(lookup_aircrafts: CSVSource) -> TransformingSource:
     """
-    Prec: lookup_aircrafts DataFrame with raw data extracted from CSV
-    Post: modifies lookup_aircrafts to have column names and columns consistent with the final DW schema
+    Prec: lookup_aircrafts és un CSVSource amb les columnes brutes del CSV
+    Post: retorna un TransformingSource amb noms de columna coherents amb l'esquema del DW
     """
-    # Rename columns for consistency with DW
-    lookup_aircrafts.rename(
-        columns={
-            "aircraft_reg_code": "aircraftregistration",
-            "aircraft_manufacturer": "manufacturer",
-            "aircraft_model": "model",
-        },
-        inplace=True,
+
+    def transform(row):  # type: ignore
+        # Map raw columns to DW schema columns
+        row["aircraftregistration"] = row["aircraft_reg_code"]
+        row["manufacturer"] = row["aircraft_manufacturer"]
+        row["model"] = row["aircraft_model"]
+        # ignore serial number to "drop it"
+        # Eliminar claus originals
+        del row["aircraft_reg_code"]
+        del row["manufacturer_serial_number"]
+        del row["aircraft_model"]
+        del row["aircraft_manufacturer"]
+
+    return TransformingSource(lookup_aircrafts, transform)
+
+
+def transform_reporter_lookup(lookup_reporters_src: CSVSource) -> PandasSource:
+    """
+    Prec: lookup_reporters_src és un CSVSource amb almenys la columna 'airport'
+    Post: retorna un TransformingSource amb columnes únicament ['airportcode'], sense duplicats
+    """
+    lookup_df = pd.DataFrame(lookup_reporters_src)  # blocking operation
+    lookup_df.rename(columns={"airport": "airportcode"}, inplace=True)
+    lookup_df = (
+        lookup_df[["reporteurid", "airportcode"]]
+        .drop_duplicates()
+        .reset_index(drop=True)
     )
-    # Drop serial number
-    lookup_aircrafts.drop(columns=["manufacturer_serial_number"], inplace=True)
-
-
-def transform_reporter_lookup(lookup_reporters_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Prec: lookup_reporters_df DataFrame with data (reporteurID, airport) extracted from CSV
-    Post: returns Dataframe with column "airportcode"
-    """
-    airports = lookup_reporters_df[["airport"]].drop_duplicates().reset_index(drop=True)
-    airports.rename(columns={"airport": "airportcode"}, inplace=True)
-    return airports
+    return PandasSource(lookup_df)
 
 
 def check_actualarrival_after_departure(flights_df: pd.DataFrame) -> None:
@@ -149,37 +159,97 @@ def check_no_overlapping_flights(flights_df: pd.DataFrame) -> None:
         logging.info("BR-2 passed: No overlapping flights detected")
 
 
-def check_aircraft_exists(reports_df: pd.DataFrame, aircrafts_df: pd.DataFrame) -> None:
+def clean_flights(flights_source: SQLSource) -> pd.DataFrame:
+    """ """
+    flights_df = pd.DataFrame(flights_source)
+    check_actualarrival_after_departure(flights_df)
+    check_no_overlapping_flights(flights_df)
+    return flights_df
+
+
+def clean_reports(reports_it: SQLSource, dw: DW) -> pd.DataFrame:
     """
-    Prec: reports_df must contain column 'aircraftregistration'
-    Post: all aircrafts in reports_df exist in aircrafts_df
-    Modifies reports_df in place by dropping invalid reports
+    Prec: reports_it must contain column 'aircraftregistration'
+    Post: returns dataframe where all aircrafts in reports_df exist in aircraft_dim
     """
     LOG_FILE = "invalid_reports.csv"
-    # obtain valid aircrafts
-    valid_aircrafts = set(aircrafts_df["aircraftregistration"].unique())
-    # find violations
-    invalid_mask = ~reports_df["aircraftregistration"].isin(valid_aircrafts)
-    invalid_reports = reports_df[invalid_mask]
-    # Fix
-    if len(invalid_reports) > 0:
-        # logging to csv file
-        try:
-            invalid_reports.to_csv(
-                LOG_FILE,
-                mode="a",
-                index=False,
-                header=not pd.io.common.file_exists(LOG_FILE),
-            )
-        except:
-            invalid_reports.to_csv(LOG_FILE, mode="w", index=False)
-        # fix: drop invalid reports in place
-        reports_df.drop(invalid_reports.index, inplace=True)
+    reports_df = pd.DataFrame(list(reports_it))
+    if reports_df.empty:
+        logging.warning("No reports found in source.")
+        return reports_df
+    # find invalid aircraftregistrations
+    valid_idx = []
+    invalid_rows = []
+    for idx, row in reports_df.iterrows():
+        reg = row.get("aircraftregistration")
+        # make sure attribute exists
+        assert reg is not None
+        # look for valid
+        if dw.aircraft_dim.lookup({"aircraftregistration": reg}) is not None:
+            valid_idx.append(idx)
+        else:
+            invalid_rows.append(row.to_dict())
+    # log invalid rows in CSV
+    if invalid_rows:
+        invalid_df = pd.DataFrame(invalid_rows)
+        invalid_df.to_csv(
+            LOG_FILE,
+            mode="a",
+            index=False,
+            header=not pd.io.common.file_exists(LOG_FILE),
+        )
         logging.info(
-            f"BR-3 fixed: Removed {len(invalid_reports)} invalid reports (logged to {LOG_FILE})"
+            f"BR-3 fixed: Removed {len(invalid_rows)} invalid reports (logged to {LOG_FILE})"
         )
     else:
-        logging.info("BR-3 passed: All reports reference valid aircraft")
+        logging.info("BR-3 passed: All reports reference valid aircrafts.")
+    return reports_df.loc[valid_idx].reset_index(drop=True)
+
+
+def valid_dates(
+    flights_df: pd.DataFrame, reports_df: pd.DataFrame, maint_it: SQLSource, dw: DW
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Prec: flights_df, reports_df dataframes and maint_it iterator with maintenance data
+    Post: modifies in place the dataframes and iterator to only contain rows with valid dates in date_dim
+    """
+    maint_df = pd.DataFrame(list(maint_it))
+
+    # Step 1: Convert all dates to datetime
+    def safe_to_datetime(series) -> pd.Series:
+        return pd.to_datetime(series, errors="coerce")  # type: ignore
+
+    flights_df["date"] = safe_to_datetime(
+        flights_df["scheduleddeparture"].apply(build_dateCode)  # type: ignore
+    )
+    maint_df["date"] = safe_to_datetime(
+        maint_df["scheduleddeparture"].apply(build_dateCode)  # type: ignore
+    )
+    reports_df["date"] = safe_to_datetime(reports_df["reportingdate"])
+    # Step 2: Get valid years from flights to match baseline queries years
+    valid_years = set(flights_df["date"].dt.year.dropna().unique())  # type: ignore
+    # Step 3: Filter all dataframes by valid years BEFORE merging
+    flights_filtered = flights_df[flights_df["date"].dt.year.isin(valid_years)].copy()  # type: ignore
+    maint_filtered = maint_df[maint_df["date"].dt.year.isin(valid_years)].copy()  # type: ignore
+    reports_filtered = reports_df[reports_df["date"].dt.year.isin(valid_years)].copy()  # type: ignore
+    return flights_filtered, reports_filtered, maint_filtered
+
+
+def get_date_dim(
+    flights_df: pd.DataFrame, reports_df: pd.DataFrame, maint_df: pd.DataFrame
+) -> PandasSource:
+    """
+    Prec: flights_df, reports_df dataframes and maint_df dataframe with maintenance data
+    Post: returns date_dim dataframe with unique dates from all three sources
+    """
+    # Build the time dimension from filtered dates
+    all_dates = set(flights_df["date"].dropna())
+    all_dates.update(maint_df["date"].dropna())
+    all_dates.update(reports_df["date"].dropna())
+    time_df = pd.DataFrame(sorted(all_dates), columns=["date"])
+    time_df["month"] = time_df["date"].apply(build_monthCode)
+    time_df["year"] = time_df["date"].dt.year
+    return PandasSource(time_df)
 
 
 def calc_delay(flights_df: pd.DataFrame) -> None:
@@ -324,72 +394,57 @@ def transform_reports(reports_df: pd.DataFrame) -> None:
     )
 
 
-def merge_flights_maint_log(
-    agg_flights_df: pd.DataFrame, agg_maint_df: pd.DataFrame, reports_df: pd.DataFrame
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+def get_facts(
+    flights_df: pd.DataFrame,
+    reports_df: pd.DataFrame,
+    maint_df: pd.DataFrame,
+    lookup_reporters_it: CSVSource,
+) -> tuple[PandasSource, PandasSource]:
     """
-    Prec: agg_flights, agg_maint, reports_df dataframes with aggregated and cleaned data
-    Post: returns daily_flight_stats dataframe with merged data from the three dataframes
-    and time dataframe with unique dates and month codes (for years in agg_flights).
+    Prec: flights_df, reports_df dataframes and maint_df dataframe with maintenance data
+    Post: returns daily_aircraft_fact dataframe with merged and aggregated data
     """
-    # Step 1: Convert all dates to datetime
-    agg_flights_df["date"] = pd.to_datetime(agg_flights_df["date"], errors="coerce")
-    agg_maint_df["date"] = pd.to_datetime(agg_maint_df["date"], errors="coerce")
-    reports_df["date"] = pd.to_datetime(reports_df["date"], errors="coerce")
-
-    # Step 2: Get valid years from flights to match baseline queries years
-    valid_years = set(agg_flights_df["date"].dt.year.dropna().unique())
-
-    # Step 3: Filter all dataframes by valid years BEFORE merging
-    agg_flights_filtered = agg_flights_df[
-        agg_flights_df["date"].dt.year.isin(valid_years)
-    ].copy()
-    agg_maint_filtered = agg_maint_df[
-        agg_maint_df["date"].dt.year.isin(valid_years)
-    ].copy()
-    reports_filtered = reports_df[reports_df["date"].dt.year.isin(valid_years)].copy()
-
-    # Step 4: Build the time dimension from filtered dates
-    all_dates = (
-        pd.concat(
-            [
-                agg_flights_filtered["date"],
-                agg_maint_filtered["date"],
-                reports_filtered["date"],
-            ]
-        )
-        .dropna()
-        .unique()  # type: ignore
+    # Step 1: Transform and aggregate
+    agg_flights = transform_flights(flights_df)
+    agg_maint = transform_maint(maint_df)
+    transform_reports(reports_df)
+    # Step 3: JOINS
+    daily_flight_stats = merge_flights_maint_log(agg_flights, agg_maint, reports_df)
+    total_maint_reports = create_total_maint_reports(
+        agg_flights, reports_df, lookup_reporters_it
     )
-    time_df = pd.DataFrame(sorted(all_dates), columns=["date"])
-    time_df["month"] = time_df["date"].apply(build_monthCode)
-    time_df["year"] = time_df["date"].dt.year
+    return PandasSource(daily_flight_stats), PandasSource(total_maint_reports)
 
-    # Step 5: Prepare reports dataframe (drop unnecessary columns and aggregate)
-    reports_proj = reports_filtered.drop(
+
+def merge_flights_maint_log(
+    agg_flights_df: pd.DataFrame,
+    agg_maint_df: pd.DataFrame,
+    reports_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Prec: agg_flights_df, agg_maint_df, reports_df ja netes i agregades
+    Post: retorna daily_flight_stats amb totes les combinacions de (date, aircraft) vàlides
+    """
+    # Step 2: Prepare reports_df
+    reports_proj = reports_df.drop(
         columns=[
-            col
-            for col in ["reporteurclass", "reporteurid"]
-            if col in reports_filtered.columns
+            c for c in ["reporteurclass", "reporteurid"] if c in reports_df.columns
         ],
         errors="ignore",
     )
     reports_proj = reports_proj.groupby(
-        ["date", "aircraftregistration"], as_index=False
+        ["date", "aircraftregistration"], as_index=False  # type: ignore
     ).agg({"pilotreports": "sum", "maintenancereports": "sum"})
-
-    # Step 6: MERGE three dataframes to keep all combinations of (date, aircraft)
-    daily_flight_stats = agg_flights_filtered.merge(
+    # Step 3: MERGE the three DataFrames
+    daily_flight_stats = agg_flights_df.merge(
         reports_proj, on=["date", "aircraftregistration"], how="outer"
     )
     daily_flight_stats = daily_flight_stats.merge(
-        agg_maint_filtered, on=["date", "aircraftregistration"], how="outer"
+        agg_maint_df, on=["date", "aircraftregistration"], how="outer"
     )
-
-    # Step 7: Impute missing values and ensure types
+    # Step 4: Impute missing values and ensure types
     numeric_cols = daily_flight_stats.select_dtypes(include="number").columns
     daily_flight_stats[numeric_cols] = daily_flight_stats[numeric_cols].fillna(0)
-    # Ensure type of integer columns
     int_cols = [
         "takeoffs",
         "delays",
@@ -400,7 +455,7 @@ def merge_flights_maint_log(
     for col in int_cols:
         if col in daily_flight_stats.columns:
             daily_flight_stats[col] = daily_flight_stats[col].astype(int)
-    return time_df, daily_flight_stats
+    return daily_flight_stats
 
 
 def join_airports_to_maint(
@@ -410,6 +465,8 @@ def join_airports_to_maint(
     Prec: maint_df and lookup_df must have same 'reporteurid' column
     Post: returns maintenance dataframe with 'airport' column added using reporteur lookup table
     """
+    maint_df["reporteurid"] = pd.to_numeric(maint_df["reporteurid"], errors="coerce")
+    lookup_df["reporteurid"] = pd.to_numeric(lookup_df["reporteurid"], errors="coerce")
     return maint_df.merge(
         lookup_df[["reporteurid", "airport"]], on="reporteurid", how="left"
     )
@@ -418,14 +475,13 @@ def join_airports_to_maint(
 def create_total_maint_reports(
     agg_flights_df: pd.DataFrame,
     maint_df: pd.DataFrame,
-    lookup_reporters_df: pd.DataFrame,
-    time_df: pd.DataFrame,
+    lookup_reporters_it: CSVSource,
 ) -> pd.DataFrame:
     """
     Prec: agg_flights_df, maint_df, lookup_reporters_df dataframes with cleaned and aggregated data
     Post: returns total_maint_reports dataframe: for each aircraft and airport, number of maintenance reports from MAREP reporters.
     """
-
+    lookup_reporters_df = pd.DataFrame(lookup_reporters_it)  # blocking operation
     # Step 1: Get sum of flight cycles and takeoffs by aircraft
     grouped_flights = agg_flights_df.groupby(
         "aircraftregistration", as_index=False  # type: ignore
@@ -434,7 +490,6 @@ def create_total_maint_reports(
     # Step 2: Filter only MAREP reporters and dates in "time_df"
     maint_df = maint_df[maint_df["reporteurclass"] == "MAREP"].copy()
     maint_df.drop(columns=["reporteurclass"], inplace=True)
-    maint_df = maint_df[maint_df["date"].isin(time_df["date"])].copy()
 
     # Step 3: count reports for eeach reporteur and aircraft
     counts = maint_df.groupby(
@@ -460,49 +515,3 @@ def create_total_maint_reports(
         columns={"airport": "airportcode", "count": "reports"}, inplace=True
     )
     return total_maint_reports
-
-
-def transform(
-    data: Dict[str, pd.DataFrame],
-) -> Dict[str, pd.DataFrame]:
-    """
-    Prec: data (dict{str, pd.DataFrame}): Dictionary of extracted dataframes to transform.
-    Post: returns dictionary of transformed dataframes ready to load into DW schema
-    """
-    # Retrieve dataframes from the input dictionary
-    flights_df = data["flights"]
-    maint_df = data["maintenance"]
-    reports_df = data["reports"]
-    lookup_reporters_df = data["lookup_reporters"]
-    aircrafts = data["lookup_aircrafts"]
-
-    # rename and project lookups
-    transform_aircrafts(aircrafts)
-    airports = transform_reporter_lookup(lookup_reporters_df)
-
-    # quality checks
-    check_actualarrival_after_departure(flights_df)
-    check_no_overlapping_flights(flights_df)
-    check_aircraft_exists(reports_df, aircrafts)
-
-    # calculate aggregate data (GROUP BY)
-    agg_flights = transform_flights(flights_df)
-    agg_maint = transform_maint(maint_df)
-    transform_reports(reports_df)
-
-    # JOIN data
-    time, daily_flight_stats = merge_flights_maint_log(
-        agg_flights, agg_maint, reports_df
-    )
-    total_maint_reports = create_total_maint_reports(
-        agg_flights, reports_df, lookup_reporters_df, time
-    )
-    logging.info("Transformation completed successfully.")
-    # return tables ready for loading
-    return {
-        "date": time,
-        "aircraft": aircrafts,
-        "airport": airports,
-        "daily_aircraft": daily_flight_stats,
-        "total_maintenance": total_maint_reports,  # type: ignore
-    }

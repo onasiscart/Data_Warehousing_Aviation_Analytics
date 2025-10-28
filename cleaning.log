@@ -1588,3 +1588,63 @@ Rule 2 fixed: Removed 5 overlapping flights (logged to overlapping_flights.csv)
 Checking Rule 3: All reports reference valid aircraft...
 Rule 3 violated: 541 reports with invalid aircraft
 Rule 3 fixed: Removed 541 invalid reports (logged to invalid_reports.csv)
+extract_flights completed successfully.
+extract_maint completed successfully.
+extract_reports completed successfully.
+extract_reporterslookup completed successfully.
+extract_aircraftlookup completed successfully.
+Extraction completed successfully.
+Checking Rule 1: actualArrival > actualDeparture...
+Rule 1 violated: 247 flights with actualArrival <= actualDeparture
+Rule 1 fixed: Swapped 247 actualArrival/actualDeparture pairs
+Checking Rule 2: No overlapping flights for same aircraft...
+Rule 2 violated: 5 overlapping flights detected
+Rule 2 fixed: Removed 5 overlapping flights (logged to overlapping_flights.csv)
+Checking Rule 3: All reports reference valid aircraft...
+Rule 3 violated: 541 reports with invalid aircraft
+Rule 3 fixed: Removed 541 invalid reports (logged to invalid_reports.csv)
+extract_flights completed successfully.
+extract_maint completed successfully.
+extract_reports completed successfully.
+extract_reporterslookup completed successfully.
+extract_aircraftlookup completed successfully.
+Extraction completed successfully.
+Checking Rule 1: actualArrival > actualDeparture...
+Rule 1 violated: 247 flights with actualArrival <= actualDeparture
+Rule 1 fixed: Swapped 247 actualArrival/actualDeparture pairs
+Checking Rule 2: No overlapping flights for same aircraft...
+Rule 2 violated: 5 overlapping flights detected
+Rule 2 fixed: Removed 5 overlapping flights (logged to overlapping_flights.csv)
+Checking Rule 3: All reports reference valid aircraft...
+Rule 3 violated: 541 reports with invalid aircraft
+Rule 3 fixed: Removed 541 invalid reports (logged to invalid_reports.csv)
+extract_flights completed successfully.
+extract_maint completed successfully.
+extract_reports completed successfully.
+extract_reporterslookup completed successfully.
+extract_aircraftlookup completed successfully.
+Extraction completed successfully.
+Checking Rule 1: actualArrival > actualDeparture...
+Rule 1 violated: 247 flights with actualArrival <= actualDeparture
+Rule 1 fixed: Swapped 247 actualArrival/actualDeparture pairs
+Checking Rule 2: No overlapping flights for same aircraft...
+Rule 2 violated: 5 overlapping flights detected
+Rule 2 fixed: Removed 5 overlapping flights (logged to overlapping_flights.csv)
+Checking Rule 3: All reports reference valid aircraft...
+Rule 3 violated: 541 reports with invalid aircraft
+Rule 3 fixed: Removed 541 invalid reports (logged to invalid_reports.csv)
+extract_flights completed successfully.
+extract_maint completed successfully.
+extract_reports completed successfully.
+extract_reporterslookup completed successfully.
+extract_aircraftlookup completed successfully.
+Extraction completed successfully.
+Checking Rule 1: actualArrival > actualDeparture...
+Rule 1 violated: 247 flights with actualArrival <= actualDeparture
+Rule 1 fixed: Swapped 247 actualArrival/actualDeparture pairs
+Checking Rule 2: No overlapping flights for same aircraft...
+Rule 2 violated: 5 overlapping flights detected
+Rule 2 fixed: Removed 5 overlapping flights (logged to overlapping_flights.csv)
+Checking Rule 3: All reports reference valid aircraft...
+Rule 3 violated: 541 reports with invalid aircraft
+Rule 3 fixed: Removed 541 invalid reports (logged to invalid_reports.csv)

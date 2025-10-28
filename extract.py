@@ -4,6 +4,7 @@ import psycopg2
 import pandas as pd
 import csv
 import warnings
+from pygrametl.datasources import CSVSource, SQLSource
 
 # ====================================================================================================================================
 # Connect to the PostgreSQL source
@@ -45,10 +46,10 @@ warnings.filterwarnings("ignore", message=".*pandas only supports SQLAlchemy.*")
 # extracting functions
 
 
-def extract_flights(extracted_data: dict[str, pd.DataFrame]) -> None:
+def extract_flights() -> SQLSource:
     """
     Prec: connection to DBBDA established in conn
-    Post: Extract flight data from AIMS.flights and store it in extracted_data
+    Post: Extract flight data from AIMS.flights and return it as SQLSource
     """
     try:
         relevant_flight_cols = [
@@ -59,17 +60,17 @@ def extract_flights(extracted_data: dict[str, pd.DataFrame]) -> None:
             "scheduleddeparture",
             "scheduledarrival",
         ]
-        extracted_data["flights"] = pd.read_sql(
-            f'SELECT {", ".join(relevant_flight_cols)} FROM "AIMS"."flights"', conn
-        )
+        query = f'SELECT {", ".join(relevant_flight_cols)} FROM "AIMS"."flights"'
+        return SQLSource(connection=conn, query=query)
     except Exception as e:
-        raise RuntimeError(f"Error reading flight data: {e}") from e
+        logging.critical(f"Error creating flight data source: {e}")
+        raise e
 
 
-def extract_maint(extracted_data: dict[str, pd.DataFrame]) -> None:
+def extract_maint() -> SQLSource:
     """
     Prec: connection to DBBDA established in conn
-    Post: Extract maintenance data from "AIMS.maintenance" and store it in extracted_data as a DataFrame
+    Post: Extract maintenance data from "AIMS.maintenance" and return it as SQLSource
     """
     try:
         relevant_maint_cols = [
@@ -78,17 +79,17 @@ def extract_maint(extracted_data: dict[str, pd.DataFrame]) -> None:
             "scheduleddeparture",
             "programmed",
         ]
-        extracted_data["maintenance"] = pd.read_sql(
-            f'SELECT {", ".join(relevant_maint_cols)} FROM "AIMS"."maintenance"', conn
-        )
+        query = f'SELECT {", ".join(relevant_maint_cols)} FROM "AIMS"."maintenance"'
+        return SQLSource(connection=conn, query=query)
     except Exception as e:
-        raise RuntimeError(f"Error reading maintenance data: {e}") from e
+        logging.critical(f"Error creating maintenance data source: {e}")
+        raise e
 
 
-def extract_reports(extracted_data: dict[str, pd.DataFrame]) -> None:
+def extract_reports() -> SQLSource:
     """
     Prec: connection to DBBDA established in conn
-    Post: Extract report data from "AMOS.postflightreports" and store it in the provided dictionary as a DataFrame
+    Post: Extract report data from "AMOS.postflightreports" and return it as SQLSource
     """
     try:
         relevant_reports_cols = [
@@ -97,70 +98,42 @@ def extract_reports(extracted_data: dict[str, pd.DataFrame]) -> None:
             "reporteurclass",
             "reporteurID",
         ]
-        extracted_data["reports"] = pd.read_sql(
-            f'SELECT {", ".join(relevant_reports_cols)} FROM "AMOS"."postflightreports"',
-            conn,
+        query = (
+            f'SELECT {", ".join(relevant_reports_cols)} FROM "AMOS"."postflightreports"'
         )
+        return SQLSource(connection=conn, query=query)
     except Exception as e:
-        raise RuntimeError(f"Error reading reports data: {e}") from e
+        logging.critical(f"Error creating reports data source: {e}")
+        raise e
 
 
-def extract_reporterslookup(
-    extracted_data: dict[str, pd.DataFrame],
-) -> None:
+def extract_reporterslookup() -> CSVSource:
     """
     Prec: maintenance_personnel.csv exists in the working directory
     Post: Extract reporter information from CSV file and store it in extracted_data
     """
     path = "maintenance_personnel.csv"
     try:
-        extracted_data["lookup_reporters"] = pd.read_csv(path)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"[extract_reporterslookup] File {path} not found.")
+        f = open(path, "r", 16384, encoding="utf-8")  # recomanat per pygrametl
+        return CSVSource(f=f, delimiter=",")  # crea la font
     except Exception as e:
-        raise RuntimeError(
-            f"[extract_reporterslookup] Error reading {path}: {e}"
-        ) from e
+        logging.critical(f"[extract_reporterslookup] Error reading {path}: {e}")
+        raise e
 
 
-def extract_aircraftlookup(extracted_data: dict[str, pd.DataFrame]) -> None:
+def extract_aircraftlookup() -> CSVSource:
     """
     Prec: aircraft-manufacturerinfo-lookup.csv exists in the working directory
-    Post: extracts aircraft manufacturer info from a CSV file and store it in extracted_data
+    Post: extracts aircraft manufacturer info from a CSV file as a CSVSource iterable
     """
     path = "aircraft-manufacturerinfo-lookup.csv"
     try:
-        extracted_data["lookup_aircrafts"] = pd.read_csv(path)
-    except FileNotFoundError:
-        raise FileNotFoundError(f"[extract_aircraftlookup] File {path} not found.")
+        f = open(path, "r", 16384, encoding="utf-8")  # recomanat per pygrametl
+        csv_source = CSVSource(f=f, delimiter=",")  # crea la font
+        return csv_source
     except Exception as e:
-        raise RuntimeError(f"[extract_aircraftlookup] Error reading {path}: {e}") from e
-
-
-def extract() -> dict[str, pd.DataFrame]:
-    """
-    Prec: connection to DBBDA established
-    Post: returns dictionary with extracted tables (flights, maintenance, techlog, lookup_reporters) as dataframes
-    and an aircraft lookup pygrametl iterable
-    """
-    extracted_data: dict[str, pd.DataFrame] = {}
-    # Actions that extract data from sources and save them in the extracted_data dictionary
-    extract_funcs = [
-        extract_flights,
-        extract_maint,
-        extract_reports,
-        extract_reporterslookup,
-        extract_aircraftlookup,
-    ]
-    for func in extract_funcs:
-        try:
-            func(extracted_data)
-        except Exception as e:
-            logging.critical(f"{func.__name__} failed: {e}")
-            # stop pipeline in case of an error
-            raise
-    logging.info("Extraction completed successfully.")
-    return extracted_data
+        logging.critical(f"[extract_aircraftlookup] Error reading {path}: {e}")
+        raise e
 
 
 # ====================================================================================================================================
