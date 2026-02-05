@@ -1,6 +1,0 @@
-dbms=postgresql
-ip=postgresfib17.fib.upc.edu
-port=5432
-user=ona.siscart
-password=DB100505
-dbname=DBBDA

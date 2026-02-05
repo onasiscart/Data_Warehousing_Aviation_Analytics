@@ -1,0 +1,6 @@
+dbms=postgresql
+ip=your-database-host
+port=5432
+user=your-username
+password=your-password
+dbname=DBBDA

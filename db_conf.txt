@@ -1,6 +1,0 @@
-dbms=postgresql
-ip=postgresfib17.fib.upc.edu
-port=5432
-user=jordi.corbalan.vilaplana
-password=DB070205
-dbname=DBBDA

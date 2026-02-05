@@ -1,0 +1,36 @@
+# Database credentials - NEVER commit!
+config/db_conf.txt
+
+# Generated data warehouse
+data/dw.duckdb
+dw.duckdb
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+.env/
+*.egg-info/
+dist/
+build/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+
+# Logs (keep structure but not contents)
+logs/*.log
+logs/*.csv
+
+# OS
+.DS_Store
+Thumbs.db
