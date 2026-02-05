@@ -1,5 +1,7 @@
 # Aviation Fleet Analytics Data Warehouse
 
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/) [![DuckDB](https://img.shields.io/badge/DuckDB-OLAP-FFF000?logo=duckdb&logoColor=black)](https://duckdb.org/) [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Source-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org/) [![ETL](https://img.shields.io/badge/ETL-pygrametl-green)](https://chrthomsen.github.io/pygrametl/)
+
 A complete Extract-Transform-Load (ETL) pipeline and analytical data warehouse for aviation fleet performance analysis. This project processes flight operations data from PostgreSQL (AIMS/AMOS systems) and loads it into a DuckDB data warehouse optimized for computing aircraft utilization and reliability KPIs.
 
 This project was developed as part of the **Advanced Databases (BDA)** course in the Bachelor's Degree in Data Science and Engineering at Universitat Politecnica de Catalunya (UPC).
