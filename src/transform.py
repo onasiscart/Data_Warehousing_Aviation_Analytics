@@ -160,7 +160,9 @@ def check_no_overlapping_flights(flights_df: pd.DataFrame) -> None:
 
 
 def clean_flights(flights_source: SQLSource) -> pd.DataFrame:
-    """ """
+    """
+    Prec: flights_source is an iterator with raw flight data extracted from the source
+    Post: returns dataframe where all business rules are enforced"""
     flights_df = pd.DataFrame(flights_source)
     check_actualarrival_after_departure(flights_df)
     check_no_overlapping_flights(flights_df)
@@ -422,8 +424,8 @@ def merge_flights_maint_log(
     reports_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Prec: agg_flights_df, agg_maint_df, reports_df ja netes i agregades
-    Post: retorna daily_flight_stats amb totes les combinacions de (date, aircraft) vàlides
+    Prec: agg_flights_df, agg_maint_df, reports_df dataframes with aggregated data
+    Post: returns daily_flight_stats with all valid (date, aircraft) combinations
     """
     # Step 2: Prepare reports_df
     reports_proj = reports_df.drop(

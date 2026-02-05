@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 # ====================================================================================================================================
 # loading functions
-def _close_csv_source(dataset: TransformingSource):
+def _close_source(dataset: TransformingSource):
     """Helper to close underlying CSV file if present"""
     if hasattr(dataset, "source") and hasattr(dataset.source, "f"):
         dataset.source.f.close()  # type: ignore[attr-defined]
@@ -32,7 +32,7 @@ def load_aircrafts(dw: DW, dataset: TransformingSource):
         dw.conn_pygrametl.commit()
         logging.info("Finished loading aircrafts dimension.")
     finally:  # close the underlying source even if there is an error
-        _close_csv_source(dataset)
+        _close_source(dataset)
 
 
 def load_airports(dw: DW, dataset: PandasSource):
@@ -51,7 +51,7 @@ def load_airports(dw: DW, dataset: PandasSource):
         dw.conn_pygrametl.commit()
         logging.info("Finished loading airports dimension.")
     finally:  # close the underlying source even if there is an error
-        _close_csv_source(dataset)
+        _close_source(dataset)
 
 
 def load_dates(dw: DW, dataset: PandasSource):
